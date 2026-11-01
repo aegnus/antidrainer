@@ -21,7 +21,8 @@ Safety rules built in:
   * The bench's own fetch route needs a random key that only the bench page knows.
   * Nothing is fetched from your local network (router, NAS, this helper itself),
     unless you start it with --allow-private (to test your own local dApp).
-  * No cookies are sent to or kept from the tested site.
+  * No cookies are sent to or kept from the tested site. Cookies its answers would set are only listed for
+    the bench page's privacy report.
 
 Needs only Python 3.8+, no extra packages.
 """
@@ -203,6 +204,17 @@ body.busy .verdict[data-level="none"] .i-busy { display: block; }
 .verdict[data-level="crit"] .v-title { color: var(--crit); }
 .v-sub { margin: 0; color: var(--label-2); font-size: 14px; }
 .score { font: 12px/1.45 var(--mono); color: var(--label-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.scorecards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scard { display: flex; flex-direction: column; gap: 3px; padding: 14px 16px; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); --tone: var(--label-3); min-width: 0; }
+.scard[data-level="crit"] { --tone: var(--crit); }
+.scard[data-level="high"] { --tone: var(--high); }
+.scard[data-level="ok"] { --tone: var(--ok); }
+.sc-label { font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--label-3); }
+.sc-num { font: 600 28px/1.15 var(--mono); color: var(--tone); font-variant-numeric: tabular-nums; }
+.sc-num small { font-size: 13px; font-weight: 500; color: var(--label-3); }
+.sc-sub { font-size: 13px; line-height: 1.4; color: var(--label-2); overflow-wrap: anywhere; }
+body:not(.has-run) .scorecards { display: none; }
+@media (max-width: 420px) { .scorecards { grid-template-columns: 1fr; } }
 .alert { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r); background: color-mix(in srgb, var(--crit) 12%, var(--surface)); color: var(--crit); font-weight: 500; font-size: 14px; }
 
 /* Segmented tabs (shadcn Tabs list + trigger) */
@@ -366,12 +378,17 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       </div>
     </div>
 
+    <div class="scorecards" id="scorecards">
+      <div class="scard" id="sc-js" data-level="none"><span class="sc-label">Malicious code</span><span class="sc-num" id="sc-js-num">–</span><span class="sc-sub" id="sc-js-sub">Not tested yet</span></div>
+      <div class="scard" id="sc-priv" data-level="none"><span class="sc-label">Privacy</span><span class="sc-num" id="sc-priv-num">–</span><span class="sc-sub" id="sc-priv-sub">Not tested yet</span></div>
+    </div>
+
     <div class="intro">
       <h3 class="section-head">How it works</h3>
       <div class="inset">
         <div class="cell"><span class="num">1</span><span class="cell-body"><span class="cell-title">Loads the live site</span><span class="cell-sub" style="display:block">In a sandbox at its own local address</span></span></div>
         <div class="cell"><span class="num">2</span><span class="cell-body"><span class="cell-title">Plays the victim</span><span class="cell-sub" style="display:block">With a honeypot wallet that signs nothing real</span></span></div>
-        <div class="cell"><span class="num">3</span><span class="cell-body"><span class="cell-title">Reports what it tried</span><span class="cell-sub" style="display:block">Fake pop-ups, signature requests, hidden code, data leaks</span></span></div>
+        <div class="cell"><span class="num">3</span><span class="cell-body"><span class="cell-title">Reports what it tried</span><span class="cell-sub" style="display:block">Fake pop-ups, signature requests, malicious code, cookies and trackers</span></span></div>
       </div>
     </div>
 
@@ -382,6 +399,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <button type="button" class="tab" role="tab" data-tab="rpc" aria-selected="false">Wallet <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="src" aria-selected="false">Code <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="net" aria-selected="false">Network <span class="badge"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="js" aria-selected="false">Malicious JS <span class="badge"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="priv" aria-selected="false">Privacy <span class="badge"></span></button>
     </div>
 
     <div class="groups">
@@ -390,6 +409,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <div class="group" data-group="rpc"><div class="group-head section-head"><h3>What it asked the test wallet</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="src"><div class="group-head section-head"><h3>Red flags in the code</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="net"><div class="group-head section-head"><h3>Where it tried to send data</h3><span class="count"></span></div><div class="list"></div></div>
+      <div class="group" data-group="js"><div class="group-head section-head"><h3>Malicious JavaScript signs</h3><span class="count"></span></div><div class="list"></div></div>
+      <div class="group" data-group="priv"><div class="group-head section-head"><h3>Privacy: cookies, trackers, fingerprinting</h3><span class="count"></span></div><div class="list"></div></div>
     </div>
     <button type="button" class="limits-link" id="open-limits">Limits of this test</button>
   </section>
@@ -439,6 +460,89 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     '0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45': 'the Uniswap SwapRouter02'
   };
   const knownSpender = a => KNOWN_SPENDERS[String(a || '').toLowerCase()];
+
+  /* ---------- Privacy: tracker list and state ---------- */
+  // Curated by hand from widely known tracker domains. A domain matches itself and every subdomain.
+  const TRACKER_SPEC = [
+    ['analytics', 'Google Analytics', 'google-analytics.com googletagmanager.com analytics.google.com'],
+    ['analytics', 'Segment', 'segment.com segment.io'], ['analytics', 'Mixpanel', 'mixpanel.com mxpnl.com'],
+    ['analytics', 'Amplitude', 'amplitude.com'], ['analytics', 'Heap', 'heap.io heapanalytics.com'],
+    ['analytics', 'PostHog', 'posthog.com'], ['analytics', 'Matomo', 'matomo.cloud'],
+    ['analytics', 'Plausible', 'plausible.io'], ['analytics', 'Pendo', 'pendo.io'],
+    ['analytics', 'New Relic', 'newrelic.com nr-data.net'], ['analytics', 'Datadog RUM', 'datadoghq.com datadoghq-browser-agent.com'],
+    ['analytics', 'Cloudflare Web Analytics', 'cloudflareinsights.com'], ['analytics', 'StatCounter', 'statcounter.com'],
+    ['analytics', 'Chartbeat', 'chartbeat.com chartbeat.net'], ['analytics', 'Scorecard Research', 'scorecardresearch.com'],
+    ['analytics', 'HubSpot', 'hs-analytics.net hs-scripts.com hsforms.net hubspot.com hubspotusercontent.com'],
+    ['analytics', 'Kissmetrics', 'kissmetrics.io'], ['analytics', 'Optimizely', 'optimizely.com'],
+    ['analytics', 'VWO', 'visualwebsiteoptimizer.com'], ['analytics', 'Yandex Metrica', 'mc.yandex.ru metrika.yandex.ru'],
+    ['analytics', 'Baidu Analytics', 'hm.baidu.com'], ['analytics', 'Adobe Analytics', 'omtrdc.net 2o7.net adobedtm.com'],
+    ['analytics', 'Vercel Analytics', 'vitals.vercel-insights.com'], ['analytics', 'Sentry', 'sentry.io'],
+    ['replay', 'Hotjar', 'hotjar.com hotjar.io'], ['replay', 'FullStory', 'fullstory.com'],
+    ['replay', 'Microsoft Clarity', 'clarity.ms'], ['replay', 'Mouseflow', 'mouseflow.com'],
+    ['replay', 'Crazy Egg', 'crazyegg.com'], ['replay', 'LogRocket', 'logrocket.com lr-ingest.io logrocket.io'],
+    ['replay', 'Smartlook', 'smartlook.com'], ['replay', 'Lucky Orange', 'luckyorange.com luckyorange.net'],
+    ['replay', 'Inspectlet', 'inspectlet.com'], ['replay', 'Contentsquare', 'contentsquare.net contentsquare.com'],
+    ['ads', 'Google Ads / DoubleClick', 'doubleclick.net googlesyndication.com googleadservices.com adservice.google.com'],
+    ['ads', 'Microsoft Advertising', 'bat.bing.com'], ['ads', 'Amazon Ads', 'amazon-adsystem.com'],
+    ['ads', 'Criteo', 'criteo.com criteo.net'], ['ads', 'Taboola', 'taboola.com'], ['ads', 'Outbrain', 'outbrain.com'],
+    ['ads', 'AppNexus / Xandr', 'adnxs.com'], ['ads', 'Rubicon', 'rubiconproject.com'], ['ads', 'PubMatic', 'pubmatic.com'],
+    ['ads', 'OpenX', 'openx.net'], ['ads', 'Index Exchange', 'casalemedia.com'], ['ads', 'The Trade Desk', 'adsrvr.org'],
+    ['ads', 'BidSwitch', 'bidswitch.net'], ['ads', 'TripleLift', '3lift.com'], ['ads', 'Smart AdServer', 'smartadserver.com'],
+    ['ads', 'Adform', 'adform.net'], ['ads', 'Media.net', 'media.net'], ['ads', 'MediaMath', 'mathtag.com'],
+    ['ads', 'Oracle BlueKai', 'bluekai.com'], ['ads', 'Adobe Audience Manager', 'demdex.net'],
+    ['ads', 'LiveRamp', 'rlcdn.com'], ['ads', 'Tapad', 'tapad.com'], ['ads', 'Quantcast', 'quantserve.com quantcount.com'],
+    ['ads', 'Salesforce DMP', 'krxd.net'], ['ads', 'ID5', 'id5-sync.com'], ['ads', '33Across', '33across.com'],
+    ['ads', 'Teads', 'teads.tv'], ['ads', 'LinkedIn Ads', 'ads.linkedin.com px.ads.linkedin.com snap.licdn.com'],
+    ['ads', 'X (Twitter) Ads', 'ads-twitter.com analytics.twitter.com static.ads-twitter.com'],
+    ['ads', 'TikTok Pixel', 'analytics.tiktok.com business-api.tiktok.com'],
+    ['ads', 'Snap Pixel', 'sc-static.net tr.snapchat.com'], ['ads', 'Reddit Ads', 'alb.reddit.com'],
+    ['ads', 'Pinterest Tag', 'ct.pinterest.com'],
+    ['social', 'Facebook / Meta', 'connect.facebook.net facebook.net'],
+    ['social', 'X (Twitter) widgets', 'platform.twitter.com'], ['social', 'LinkedIn widgets', 'platform.linkedin.com'],
+    ['social', 'Instagram embeds', 'instagram.com'], ['social', 'AddThis', 'addthis.com addthisedge.com'],
+    ['social', 'ShareThis', 'sharethis.com'],
+    ['fingerprint', 'Fingerprint', 'fpjs.io fpcdn.io fingerprint.com fingerprintjs.com'],
+    ['fingerprint', 'ThreatMetrix', 'online-metrix.net'], ['fingerprint', 'HUMAN / PerimeterX', 'perimeterx.net px-cdn.net px-cloud.net'],
+    ['fingerprint', 'DataDome', 'datadome.co'], ['fingerprint', 'iovation', 'iovation.com']
+  ];
+  const TRACKERS = new Map();
+  for (const [cat, company, doms] of TRACKER_SPEC) for (const d of doms.split(' ')) TRACKERS.set(d, { cat, company });
+  const TRACKER_CAT = {
+    ads: { label: 'advertising trackers', detail: 'Ad networks build a profile of you across sites and use it to target ads.' },
+    replay: { label: 'session recorders', detail: 'These record mouse movement, clicks and often what you type, to replay your visit.' },
+    analytics: { label: 'analytics trackers', detail: 'They log visits and behaviour and often link them to a persistent ID.' },
+    social: { label: 'social-media trackers', detail: 'Social widgets and pixels tell those platforms which sites you visit, even without clicking.' },
+    fingerprint: { label: 'device fingerprinting services', detail: 'They identify your device from its hardware and software traits, without cookies.' }
+  };
+  const TRACK_COOKIE = /^(_ga(_.+)?|_gid|_gat.*|_gcl_.+|_fbp|_fbc|fr|_hj.+|_clck|_clsk|ajs_.+|mp_.+|_pk_.+|__utm.|_uet.+|_ttp|_tt_.+|IDE|NID|_scid|_pin_unauth|hubspotutk|__hs.+|_rdt_uuid|_cc_id|__qca|_ym_.+|amplitude_id.*|ph_.+|_dd_s|_derived_epik|__gads|__gpi|MUID|li_.+|_cq_.+)$/;
+  // Tracking code that shows up in a script even when it is not seen making a request.
+  const PRIV_CODE = [
+    { re: /_hjSettings|static\.hotjar\.com/, cat: 'replay', name: 'Hotjar' },
+    { re: /\brrweb\b|rrweb-record/, cat: 'replay', name: 'rrweb session recorder' },
+    { re: /_fs_host|fullstory\.com\/s\/fs\.js/, cat: 'replay', name: 'FullStory' },
+    { re: /clarity\.ms\/tag/, cat: 'replay', name: 'Microsoft Clarity' },
+    { re: /\bfbq\(\s*['"]init['"]/, cat: 'social', name: 'Meta Pixel' },
+    { re: /\bgtag\(\s*['"]config['"]|\bga\(\s*['"]create['"]/, cat: 'analytics', name: 'Google Analytics' },
+    { re: /\bmixpanel\.init\(/, cat: 'analytics', name: 'Mixpanel' },
+    { re: /\bposthog\.init\(/, cat: 'analytics', name: 'PostHog' },
+    { re: /\bamplitude\.(getInstance|init)\(/, cat: 'analytics', name: 'Amplitude' },
+    { re: /\bFingerprintJS\b|fpjs-pro|openfpcdn/, cat: 'fingerprint', name: 'FingerprintJS' },
+    { re: /\bttq\.(load|page)\(/, cat: 'ads', name: 'TikTok Pixel' }
+  ];
+  // Hosts reported as serving malicious scripts through supply-chain compromises (polyfill.io, June 2024 onwards).
+  const BAD_JS_HOSTS = /(^|\.)(polyfill\.io|bootcss\.com|bootcdn\.net|staticfile\.net|staticfile\.org|unionadjs\.com|xhsbpza\.com|union\.macoms\.la|newcrbpc\.com)$/i;
+  const SLD2 = /^(co|com|org|net|gov|ac|edu)$/;
+  const baseDomain = h => { const p = String(h || '').toLowerCase().split('.'); return p.length > 2 && SLD2.test(p[p.length - 2]) && p[p.length - 1].length === 2 ? p.slice(-3).join('.') : p.slice(-2).join('.'); };
+  const isIp = h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
+  const pageHost = () => { try { return new URL(currentUrl).hostname.toLowerCase(); } catch (_) { return ''; } };
+  const classify = host => {
+    const parts = String(host).toLowerCase().split('.');
+    for (let i = 0; i < parts.length - 1; i++) { const t = TRACKERS.get(parts.slice(i).join('.')); if (t) return t; }
+    return null;
+  };
+  let P = null;
+  const resetPriv = () => { P = { hosts: new Map(), trackers: new Map(), code: new Map(), cookies: new Map(), fp: new Map(), pixels: new Map(), reqs: new Set(), cookieCount: 0, wasm: new Set(), worker: new Set(), sri: new Set() }; };
+  resetPriv();
 
   /* ---------- Harness: runs inside the sandbox before the page's own code ---------- */
   function harness(cfg) {
@@ -542,6 +646,125 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     if (navigator.sendBeacon) { const sb = navigator.sendBeacon.bind(navigator); navigator.sendBeacon = (u, d) => { net('beacon', u); return sb(u, d); }; }
     const wo = window.open; window.open = function (u) { net('window.open', u); try { return wo.apply(this, arguments); } catch (_) { return null; } };
+
+    // Privacy and malicious-code probes: record what the page's scripts do and which script did it.
+    const siteHost = String(cfg.site || '').toLowerCase();
+    const baseOf = h => { const p = String(h).toLowerCase().split('.'); return p.length > 2 && /^(co|com|org|net|gov|ac|edu)$/.test(p[p.length - 2]) && p[p.length - 1].length === 2 ? p.slice(-3).join('.') : p.slice(-2).join('.'); };
+    const ownHost = h => !h || h === location.hostname || h === siteHost || (siteHost && baseOf(h) === baseOf(siteHost));
+    // The nearest script on the call stack that does not belong to the site itself, else 'first-party'.
+    const callerOf = () => {
+      try {
+        const urls = String(new Error().stack).match(/https?:\/\/[^\s)'"]+/g) || [];
+        for (const u of urls) { const h = new URL(u).hostname; if (!ownHost(h)) return h; }
+      } catch (_) {}
+      return 'first-party';
+    };
+    const probed = new Set();
+    const probe = (api, key, extra) => {
+      const k = api + '|' + key;
+      if (probed.has(k) || probed.size > 400) return;
+      probed.add(k);
+      post('probe', Object.assign({ api }, extra));
+    };
+    const guard = fn => { try { fn(); } catch (_) {} };
+
+    guard(() => {
+      const textDrawn = new WeakSet();
+      const C2 = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+      if (C2) {
+        for (const fn of ['fillText', 'strokeText']) { const o = C2[fn]; C2[fn] = function () { guard(() => textDrawn.add(this.canvas)); return o.apply(this, arguments); }; }
+        const big = c => c && c.width >= 16 && c.height >= 16;
+        const gi = C2.getImageData;
+        C2.getImageData = function () { guard(() => { if (textDrawn.has(this.canvas) && big(this.canvas)) { const by = callerOf(); probe('canvas', by, { api: 'canvas', by }); } }); return gi.apply(this, arguments); };
+        const fonts = new Set(), mt = C2.measureText;
+        C2.measureText = function () { guard(() => { fonts.add(this.font); if (fonts.size >= 20) { const by = callerOf(); probe('fonts', by, { api: 'fonts', by }); } }); return mt.apply(this, arguments); };
+        for (const fn of ['toDataURL', 'toBlob']) {
+          const o = HTMLCanvasElement.prototype[fn];
+          HTMLCanvasElement.prototype[fn] = function () { guard(() => { if (textDrawn.has(this) && big(this)) { const by = callerOf(); probe('canvas', by, { api: 'canvas', by }); } }); return o.apply(this, arguments); };
+        }
+      }
+      for (const name of ['WebGLRenderingContext', 'WebGL2RenderingContext']) {
+        const proto = window[name] && window[name].prototype;
+        if (!proto) continue;
+        const gp = proto.getParameter;
+        proto.getParameter = function (p) { if (p === 37445 || p === 37446) guard(() => { const by = callerOf(); probe('webgl', by, { api: 'webgl', by }); }); return gp.apply(this, arguments); };
+      }
+      const wrapCtor = (name, api) => {
+        const Orig = window[name];
+        if (!Orig) return;
+        const W = function () { guard(() => { const by = callerOf(); probe(api, by, { api, by }); }); return Reflect.construct(Orig, arguments, new.target || W); };
+        W.prototype = Orig.prototype;
+        window[name] = W;
+      };
+      wrapCtor('OfflineAudioContext', 'audio');
+      wrapCtor('RTCPeerConnection', 'webrtc');
+      wrapCtor('Worker', 'worker');
+      if (window.WebAssembly) for (const fn of ['instantiate', 'compile']) {
+        const o = WebAssembly[fn];
+        WebAssembly[fn] = function () { guard(() => { const by = callerOf(); probe('wasm', by, { api: 'wasm', by }); }); return o.apply(this, arguments); };
+      }
+    });
+
+    // Device traits: many different reads from one script is the signature of a fingerprinting library.
+    guard(() => {
+      const reads = {};
+      const watch = (proto, prop) => {
+        const d = proto && Object.getOwnPropertyDescriptor(proto, prop);
+        if (!d || !d.get) return;
+        Object.defineProperty(proto, prop, { configurable: true, enumerable: d.enumerable, set: d.set, get() {
+          guard(() => { const by = callerOf(); const s = reads[by] = reads[by] || new Set(); s.add(prop); if (s.size >= 6) probe('navprops', by, { api: 'navprops', by, props: [...s].join(', ') }); });
+          return d.get.call(this);
+        } });
+      };
+      for (const p of ['hardwareConcurrency', 'deviceMemory', 'plugins', 'languages', 'platform', 'maxTouchPoints', 'userAgentData']) watch(window.Navigator && Navigator.prototype, p);
+      for (const p of ['colorDepth', 'pixelDepth', 'availWidth', 'availHeight']) watch(window.Screen && Screen.prototype, p);
+    });
+
+    // Cookies written by scripts, keystroke listeners, clipboard writes.
+    guard(() => {
+      const cd = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      // Without the helper the sandbox has no origin and cookie access throws; keep an in-memory jar so the page keeps running.
+      const jar = new Map();
+      if (cd && cd.set) Object.defineProperty(Document.prototype, 'cookie', { configurable: true, enumerable: cd.enumerable,
+        get() { try { return cd.get.call(this); } catch (_) { return [...jar].map(([k, v]) => k + '=' + v).join('; '); } },
+        set(v) {
+          guard(() => { const by = callerOf(), raw = String(v).slice(0, 400); probe('cookie', raw, { api: 'cookie', raw, by }); });
+          try { return cd.set.call(this, v); } catch (_) {
+            const first = String(v).split(';')[0], i = first.indexOf('=');
+            if (i > 0) { if (/max-age=0|max-age=-/i.test(v)) jar.delete(first.slice(0, i).trim()); else jar.set(first.slice(0, i).trim(), first.slice(i + 1)); }
+          }
+        } });
+      const KEYS = /^(key(down|up|press)|input|beforeinput|textInput)$/;
+      const add = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function (type) {
+        if (KEYS.test(type) && (this === window || this === document || this === document.documentElement || this === document.body)) guard(() => { const by = callerOf(); probe('keys', by, { api: 'keys', by }); });
+        return add.apply(this, arguments);
+      };
+      if (navigator.clipboard && Clipboard.prototype.writeText) {
+        const wt = Clipboard.prototype.writeText;
+        Clipboard.prototype.writeText = function (t) { guard(() => { const by = callerOf(), text = String(t).slice(0, 120); probe('clip', text, { api: 'clip', text, by }); }); return wt.apply(this, arguments); };
+      }
+      const sd = DataTransfer.prototype.setData;
+      DataTransfer.prototype.setData = function (type, v) {
+        guard(() => { if (window.event && window.event.type === 'copy') { const by = callerOf(), text = String(v).slice(0, 120); probe('clip', text, { api: 'clip', text, by }); } });
+        return sd.apply(this, arguments);
+      };
+    });
+
+    // Tracking pixels and hidden frames.
+    guard(() => {
+      const tiny = img => img.naturalWidth > 0 && img.naturalWidth <= 2 && img.naturalHeight <= 2;
+      const checkPixel = img => guard(() => { if (tiny(img)) { const url = img.currentSrc || img.src; probe('pixel', url, { api: 'pixel', url }); } });
+      const d = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      if (d && d.set) Object.defineProperty(HTMLImageElement.prototype, 'src', { configurable: true, enumerable: d.enumerable, get: d.get,
+        set(v) { guard(() => { net('image', new URL(String(v), location.href).href); this.addEventListener('load', () => checkPixel(this), { once: true }); }); return d.set.call(this, v); } });
+      window.addEventListener('load', () => setTimeout(() => { guard(() => { for (const img of document.images) checkPixel(img); }); }, 1500));
+      const frames = new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.tagName === 'IFRAME') setTimeout(() => guard(() => {
+        const r = n.getBoundingClientRect(), cs = getComputedStyle(n), src = n.src || n.getAttribute('src') || '';
+        if (/^https?:/i.test(src) && !ownHost(new URL(src).hostname) && (r.width <= 2 || r.height <= 2 || cs.display === 'none' || cs.visibility === 'hidden')) probe('hiddenframe', src, { api: 'hiddenframe', url: src });
+      }), 300); });
+      frames.observe(document, { subtree: true, childList: true });
+    });
 
     // Fake pop-up scanner: anything inside the page that looks like a wallet prompt is fake.
     const seen = new Set();
@@ -654,8 +877,43 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const m = src.match(r.re);
       if (m) add('src', r.sev, r.title, r.detail, where + excerpt(src, m.index, m[0].length));
     }
+    jsScan(src, file);
   }
   const excerpt = (s, i, len) => s.slice(Math.max(0, i - 50), i + len + 50).replace(/\s+/g, ' ').trim();
+
+  /* ---------- Malicious JavaScript rules (scored separately from drainer behaviour) ---------- */
+  const JS_RULES = [
+    { re: /eval\(function\(p,a,c,k,e,[dr]\)/, sev: 'high', title: 'Packed script (Dean Edwards packer)', detail: 'Packers hide code from review. Real apps ship plain minified bundles instead.' },
+    { re: /(\[\]|\(!\[\]\+\[\]\)|!\+\[\]|!!\[\]|\+\[\]){24,}/, sev: 'high', title: 'JSFuck-encoded script', detail: 'Code written with only brackets, plus signs and bangs exists to evade scanners.' },
+    { re: /(\\x[0-9a-f]{2}){12,}/gi, min: 5, sev: 'med', title: 'Dense hex-escaped strings', detail: 'Long runs of \\x escapes are used to hide URLs and function names.' },
+    { re: /(?<!base64,)(?<![A-Za-z0-9+\/])[A-Za-z0-9+\/]{3000,}={0,2}/, sev: 'med', title: 'Large embedded encoded blob', detail: 'A multi-kilobyte base64-like string outside of an image or font often holds a hidden payload.' },
+    { re: /document\.write\(\s*unescape\(/, sev: 'high', title: 'Writes hidden markup with unescape()', detail: 'A classic way to inject a hidden iframe or script.' },
+    { re: /\.then\(\s*\w+\s*=>\s*\w+\.text\(\)\s*\)\s*\.then\(\s*(eval|Function)\b|eval\(\s*\w+\.responseText\s*\)|new Function\(\s*await\s/, sev: 'high', title: 'Runs code downloaded at runtime', detail: 'The script fetches more code and executes it, so what you see here is not what runs.' },
+    { re: /coinhive|coin-hive|cryptonight|cryptoloot|crypto-loot|webminepool|authedmine|coinimp|jsecoin|deepminer|monerominer/i, sev: 'high', title: 'Cryptominer', detail: 'References a browser mining service that uses your CPU to mine coins.' },
+    { re: /stratum\+(tcp|ssl)|pool\.(supportxmr|minexmr|hashvault)/i, sev: 'high', title: 'Mining pool address', detail: 'A mining pool endpoint in a web page means it mines in your browser.' },
+    { re: /navigator\.clipboard\.writeText[\s\S]{0,300}0x[0-9a-fA-F]{40}|0x[0-9a-fA-F]{40}[\s\S]{0,300}navigator\.clipboard\.writeText|addEventListener\(\s*['"]copy['"][\s\S]{0,300}(setData|writeText)/, sev: 'high', title: 'Can swap a copied wallet address', detail: 'Clipboard hijackers replace the address you copy with the attacker\'s.' },
+    { re: /discord(app)?\.com\/api\/webhooks\//i, sev: 'high', title: 'Sends data to a Discord webhook', detail: 'Stealers commonly report to Discord webhooks. Normal sites do not.' },
+    { re: /pastebin\.com\/raw|ngrok(-free)?\.(io|app|dev)|serveo\.net|trycloudflare\.com/i, sev: 'med', title: 'Talks to a tunnel or paste service', detail: 'Short-lived tunnels and paste sites are used to host payloads and collect stolen data.' },
+    { re: /addEventListener\(\s*['"]key(down|press|up)['"][\s\S]{0,250}(XMLHttpRequest|fetch\(|sendBeacon|new Image)/, sev: 'med', title: 'Keystroke listener that sends data out', detail: 'Reads what you type and transmits it, which is how keyloggers work.' },
+    { re: /type\s*=\s*['"]?password[\s\S]{0,300}(sendBeacon|new Image|XMLHttpRequest)|(card[-_ ]?number|cc[-_ ]?num|cvv|cvc)[\s\S]{0,400}(sendBeacon|XMLHttpRequest|fetch\()/i, sev: 'med', title: 'Reads password or card fields near a network call', detail: 'Form skimmers (Magecart) copy card and password fields and send them to the attacker.' },
+    { re: /createElement\(\s*['"]iframe['"]\s*\)[\s\S]{0,240}(display\s*[:=]\s*['"]?none|(width|height)\s*[:=]\s*['"]?[01]\b)/, sev: 'med', title: 'Creates a hidden iframe', detail: 'Invisible frames load other sites for tracking or malware delivery.' },
+    { re: /(location\.(replace|assign)\(|location\.href\s*=)[^;]{0,60}atob\(/, sev: 'med', title: 'Redirects to a hidden address', detail: 'The destination is base64-encoded so scanners cannot read it.' },
+    { re: /wss?:\/\/\d{1,3}(\.\d{1,3}){3}/, sev: 'med', title: 'WebSocket to a bare IP address', detail: 'Command-and-control and mining traffic often uses raw addresses.' },
+    { re: /String\.fromCharCode\([^)]{200,}\)/, sev: 'med', title: 'Builds code from character codes', detail: 'A long fromCharCode list hides a string that is then run or injected.' }
+  ];
+  function jsScan(src, file) {
+    const where = file ? '[' + file + '] ' : '';
+    for (const r of JS_RULES) {
+      if (r.min) {
+        const n = (src.match(r.re) || []).length;
+        if (n >= r.min) add('js', r.sev, r.title, r.detail, where + n + ' occurrences');
+        continue;
+      }
+      const m = src.match(r.re);
+      if (m) add('js', r.sev, r.title, r.detail, where + excerpt(src, m.index, Math.min(m[0].length, 160)));
+    }
+    for (const r of PRIV_CODE) if (r.re.test(src) && !P.code.has(r.name)) P.code.set(r.name, { cat: r.cat, file: file || '' });
+  }
 
   /* ---------- Wallet request analysis ---------- */
   const big = v => { try { return BigInt(v); } catch (_) { return null; } };
@@ -756,6 +1014,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   function analyzeNet({ kind, url }) {
     let host = '';
     try { host = new URL(url, location.href).hostname; } catch (_) {}
+    if (host !== '127.0.0.1') noteHost(host.toLowerCase(), url, kind);
+    if (isIp(host) && host !== '127.0.0.1' && !isIp(pageHost())) add('js', 'med', 'Sends requests to a bare IP address', kind + ' to ' + host + '. Real services use domain names; command-and-control and mining traffic often uses raw addresses.', url);
     if (/moonscan\.live|scanclaw\.live|aodefevrgdkhqltdnwgzbyjoywrlbntbhfwq|aahdjjsivunugynqjvyfbhqnjekniyfboma/i.test(url)) return add('net', 'crit', 'Contacts known StepDrainer infrastructure', kind + ' to ' + host, url);
     if (/api\.telegram\.org/i.test(url)) return add('net', 'high', 'Reports to a Telegram bot', kind + ' to ' + host, url);
     const leaks = /0x7e57000000000000000000000000000000000001/i.test(url) ? ', sending along the wallet address' : '';
@@ -777,6 +1037,159 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     else if (d.kind === 'lure') add('ui', 'info', 'Lure text on the page', 'Claim and reward wording is common drainer bait.', d.snippet);
   }
 
+  /* ---------- Privacy and script-behaviour analysis ---------- */
+  const hostOf = u => { try { return new URL(u, currentUrl).hostname.toLowerCase(); } catch (_) { return ''; } };
+  function noteHost(host, url, how) {
+    if (!host) return;
+    if (BAD_JS_HOSTS.test(host)) add('js', 'high', 'Script host linked to a supply-chain attack', host + ' was reported serving malicious code to sites that embedded it (polyfill.io compromise, 2024).', how + ': ' + url);
+    if (baseDomain(host) === baseDomain(pageHost())) return;
+    if (!P.hosts.has(host)) P.hosts.set(host, how);
+    const t = classify(host);
+    if (t && !P.trackers.has(host)) P.trackers.set(host, t);
+  }
+  function parseCookie(raw, reqHost, by) {
+    const parts = String(raw).split(';').map(x => x.trim());
+    const eq = parts[0].indexOf('=');
+    const name = eq < 0 ? parts[0] : parts[0].slice(0, eq);
+    if (!name) return;
+    const c = { name, host: reqHost, secure: false, httpOnly: false, sameSite: '', days: null, by: by || '' };
+    for (const a of parts.slice(1)) {
+      const [k, ...v] = a.split('='); const key = k.toLowerCase(), val = v.join('=');
+      if (key === 'domain') c.host = val.replace(/^\./, '').toLowerCase() || c.host;
+      else if (key === 'secure') c.secure = true;
+      else if (key === 'httponly') c.httpOnly = true;
+      else if (key === 'samesite') c.sameSite = val.toLowerCase();
+      else if (key === 'max-age' && !isNaN(+val)) c.days = +val / 86400;
+      else if (key === 'expires' && c.days === null) { const t = Date.parse(val); if (!isNaN(t)) c.days = (t - Date.now()) / 86400000; }
+    }
+    c.third = baseDomain(c.host) !== baseDomain(pageHost()) && !!c.host && c.host !== '127.0.0.1';
+    c.tracking = TRACK_COOKIE.test(name) || !!classify(c.host);
+    const key = c.host + '|' + name;
+    if (!P.cookies.has(key)) P.cookies.set(key, c);
+  }
+  const FP_INFO = {
+    canvas: { sev: 'high', title: 'Canvas fingerprinting', detail: 'Draws hidden text and reads the pixels back. Small rendering differences give your device a stable ID.' },
+    fonts: { sev: 'high', title: 'Font fingerprinting', detail: 'Measures text in many fonts to learn which fonts you have installed, which is rare enough to identify you.' },
+    audio: { sev: 'high', title: 'Audio fingerprinting', detail: 'Renders audio offscreen and hashes the result, which differs slightly between devices.' },
+    webgl: { sev: 'med', title: 'Reads your graphics card model', detail: 'The GPU renderer string is a strong device-identifying trait.' },
+    webrtc: { sev: 'med', title: 'Opens a WebRTC connection', detail: 'Can reveal your local and public IP address, even behind a VPN. Video-call sites use it legitimately.' },
+    navprops: { sev: 'med', title: 'Reads many device properties', detail: 'One script collected cores, memory, plugins, screen and language: the usual recipe for a fingerprint.' },
+    keys: { sev: 'med', title: 'Third-party script listens to keystrokes', detail: 'Session-replay and analytics tools do this to record typing. Check what it does with it.' }
+  };
+  function analyzeProbe(d) {
+    if (d.api === 'cookie') return parseCookie(d.raw, pageHost(), d.by);
+    if (d.api === 'pixel') { P.pixels.set(d.url, 'seen in page'); noteHost(hostOf(d.url), d.url, 'image'); return render(); }
+    if (d.api === 'clip') {
+      const isAddr = /^(0x[0-9a-fA-F]{40}|bc1[a-z0-9]{20,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|T[A-Za-z1-9]{33})$/.test(d.text.trim());
+      if (isAddr) add('js', 'high', 'Puts a crypto address on your clipboard', 'This is how clipboard hijackers work, though a normal "Copy address" button does the same. Check that the address is the one shown on screen.', d.text + (d.by !== 'first-party' ? '  (by ' + d.by + ')' : ''));
+      else add('js', 'info', 'Writes to your clipboard', 'The page copied text without being asked, or from a button.', d.text);
+      return;
+    }
+    if (d.api === 'wasm' || d.api === 'worker') {
+      if (d.by === 'first-party') return;
+      (d.api === 'wasm' ? P.wasm : P.worker).add(d.by);
+      for (const by of P.wasm) if (P.worker.has(by)) add('js', 'med', 'WebAssembly in a background worker from a third party', 'Cryptominers run exactly like this: native-speed code in a worker thread. Some legitimate tools do too.', by);
+      return;
+    }
+    if (d.api === 'hiddenframe') { noteHost(hostOf(d.url), d.url, 'frame'); return add('js', 'med', 'Hidden frame loads another site', 'An invisible frame can load trackers or malware without you noticing.', d.url); }
+    if (FP_INFO[d.api]) {
+      if (d.api === 'keys' && d.by === 'first-party') return;
+      const m = P.fp.get(d.api) || new Map(); m.set(d.by, d.props || ''); P.fp.set(d.api, m);
+      render();
+    }
+  }
+  function ingestLog(log) {
+    for (const r of log.requests || []) {
+      if (P.reqs.has(r.url)) continue;
+      P.reqs.add(r.url);
+      const host = hostOf(r.url);
+      noteHost(host, r.url, 'request');
+      // A few-byte image from another site is a tracking pixel.
+      if (/^image\//.test(r.type) && r.size > 0 && r.size <= 200 && host && baseDomain(host) !== baseDomain(pageHost())) P.pixels.set(r.url, r.size + ' bytes');
+    }
+    for (const c of (log.cookies || []).slice(P.cookieCount)) parseCookie(c.raw, hostOf(c.url), 'server');
+    P.cookieCount = (log.cookies || []).length;
+    render();
+  }
+  // Markup scan: what the page's HTML loads from other sites, even where the helper cannot see requests.
+  function scanMarkup(html, u) {
+    let doc; try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { return; }
+    const base = baseDomain(u.hostname);
+    doc.querySelectorAll('script[src], img[src], iframe[src], source[src], embed[src], link[href]').forEach(el => {
+      const raw = el.getAttribute('src') || el.getAttribute('href');
+      let abs; try { abs = new URL(raw, u.href); } catch (_) { return; }
+      if (!/^https?:$/.test(abs.protocol)) return;
+      const rel = (el.getAttribute('rel') || '').toLowerCase();
+      if (el.tagName === 'LINK' && !/stylesheet|preload|modulepreload|preconnect|dns-prefetch|prefetch/.test(rel)) return;
+      noteHost(abs.hostname.toLowerCase(), abs.href, el.tagName.toLowerCase());
+      const third = baseDomain(abs.hostname) !== base;
+      if (el.tagName === 'IMG' && third && (+el.getAttribute('width') <= 2 && +el.getAttribute('height') <= 2) && el.hasAttribute('width')) P.pixels.set(abs.href, 'declared 1x1');
+      if (third && ((el.tagName === 'SCRIPT') || (el.tagName === 'LINK' && /stylesheet/.test(rel))) && !el.hasAttribute('integrity')) P.sri.add(abs.hostname.toLowerCase());
+    });
+    render();
+  }
+
+  // Privacy findings are derived from the collected state each time, so counts stay current.
+  function syncPrivacy() {
+    findings = findings.filter(f => f.group !== 'priv');
+    if (!run) return;
+    const out = [];
+    const push = (sev, title, detail, evidence) => out.push({ group: 'priv', sev, title, detail, evidence });
+    const list = (arr, n) => arr.slice(0, n || 12).join('\n') + (arr.length > (n || 12) ? '\n… and ' + (arr.length - (n || 12)) + ' more' : '');
+    const fmt = c => c.name + '  ·  ' + c.host + (c.third ? '  ·  third-party' : '') + '  ·  ' + (c.days === null ? 'session' : c.days < 1 ? 'under a day' : Math.round(c.days) + ' days') + (c.by && c.by !== 'server' ? '  ·  set by script' + (c.by !== 'first-party' ? ' from ' + c.by : '') : '') + (c.secure ? '' : '  ·  not Secure');
+    const cookies = [...P.cookies.values()];
+    const thirdTrack = cookies.filter(c => c.third && c.tracking), thirdOther = cookies.filter(c => c.third && !c.tracking);
+    const firstTrack = cookies.filter(c => !c.third && c.tracking), firstOther = cookies.filter(c => !c.third && !c.tracking);
+    if (thirdTrack.length) push('high', thirdTrack.length + ' third-party tracking cookie' + (thirdTrack.length > 1 ? 's' : ''), 'Cookies from advertising or analytics domains follow you from site to site.', list(thirdTrack.map(fmt)));
+    if (thirdOther.length) push('med', thirdOther.length + ' other third-party cookie' + (thirdOther.length > 1 ? 's' : ''), 'Cookies set by domains other than the site you visited.', list(thirdOther.map(fmt)));
+    if (firstTrack.length) push('med', firstTrack.length + ' tracking cookie' + (firstTrack.length > 1 ? 's' : '') + ' on the site\'s own domain', 'Analytics and ad scripts store IDs in first-party cookies, so browser protections against third-party cookies do not stop them.', list(firstTrack.map(fmt)));
+    if (firstOther.length) push('info', firstOther.length + ' other cookie' + (firstOther.length > 1 ? 's' : ''), 'Cookies from the site itself. Often needed for logins and settings.', list(firstOther.map(fmt)));
+    const longLived = cookies.filter(c => c.days !== null && c.days > 395);
+    if (longLived.length) push('info', longLived.length + ' cookie' + (longLived.length > 1 ? 's' : '') + ' lasting over a year', 'Browsers cap cookie life at about 400 days, so longer values are either ignored or aimed at old browsers.', list(longLived.map(fmt)));
+
+    // Trackers: seen on the wire, in the page markup, or as code, grouped by kind.
+    const byCat = {};
+    for (const [host, t] of P.trackers) (byCat[t.cat] = byCat[t.cat] || new Map()).set(t.company, host);
+    for (const [name, c] of P.code) { const m = byCat[c.cat] = byCat[c.cat] || new Map(); if (!m.has(name)) m.set(name, 'in code' + (c.file ? ' [' + c.file + ']' : '')); }
+    for (const [cat, m] of Object.entries(byCat)) {
+      const n = m.size, info = TRACKER_CAT[cat];
+      const sev = cat === 'ads' ? (n >= 5 ? 'crit' : 'high') : cat === 'replay' ? 'high' : cat === 'analytics' ? (n >= 4 ? 'high' : 'med') : 'med';
+      push(sev, n + ' ' + info.label.replace(/s$/, n > 1 ? 's' : ''), info.detail, list([...m].map(([co, h]) => co + '  (' + h + ')')));
+    }
+
+    for (const [api, who] of P.fp) {
+      const f = FP_INFO[api];
+      push(f.sev, f.title, f.detail, list([...who].map(([by, props]) => (by === 'first-party' ? 'the site\'s own script' : by) + (props ? '  (' + props + ')' : ''))));
+    }
+    if (P.pixels.size) {
+      const n = P.pixels.size;
+      push(n >= 3 ? 'high' : 'med', n + ' tracking pixel' + (n > 1 ? 's' : ''), 'Invisible 1-pixel images report each visit to another server, including your IP address and often an ID in the address.', list([...P.pixels].map(([u, how]) => how + '  ' + u.slice(0, 160))));
+    }
+    if (P.hosts.size) {
+      const n = P.hosts.size;
+      push(n >= 15 ? 'med' : 'info', 'Contacts ' + n + ' third-party domain' + (n > 1 ? 's' : ''), n >= 15 ? 'Every extra domain learns your IP address and which page you visited.' : 'Other domains the page loads from. Each one learns your IP address and the page you visited.', list([...P.hosts].map(([h, how]) => h + '  (' + how + ')'), 25));
+    }
+    if (!HELPER) push('info', 'Limited view without the local helper', 'Cookies and background requests are only visible through the helper. Only the page markup and script behaviour were checked.', '');
+    findings.push(...out);
+  }
+
+  const PRIV_PEN = { crit: 30, high: 15, med: 6, info: 0 };
+  function renderScores() {
+    const set = (id, level, num, sub) => { const c = document.getElementById('sc-' + id); c.dataset.level = level; document.getElementById('sc-' + id + '-num').innerHTML = num; document.getElementById('sc-' + id + '-sub').textContent = sub; };
+    if (!run) { set('js', 'none', '–', 'Not tested yet'); set('priv', 'none', '–', 'Not tested yet'); return; }
+    const js = findings.filter(f => f.group === 'js').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
+    const risk = Math.min(100, js.reduce((s, f) => s + SEV[f.sev], 0));
+    const crit = js.some(f => f.sev === 'crit');
+    set('js', crit || risk >= 60 ? 'crit' : risk >= 30 ? 'high' : 'ok', risk + '<small> / 100 risk</small>',
+      !js.length ? 'No malicious-script signs seen' : js.slice(0, 2).map(f => f.title).join(' · ') + (js.length > 2 ? ' · +' + (js.length - 2) + ' more' : ''));
+    const pr = findings.filter(f => f.group === 'priv');
+    const pen = pr.reduce((s, f) => s + PRIV_PEN[f.sev], 0), score = Math.max(0, 100 - pen);
+    const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+    const top = pr.filter(f => PRIV_PEN[f.sev] > 0).sort((a, b) => PRIV_PEN[b.sev] - PRIV_PEN[a.sev]);
+    set('priv', score >= 75 ? 'ok' : score >= 40 ? 'high' : 'crit', grade + '<small> · ' + score + ' / 100</small>',
+      !top.length ? 'No tracking seen' : top.slice(0, 2).map(f => f.title).join(' · ') + (top.length > 2 ? ' · +' + (top.length - 2) + ' more' : ''));
+  }
+
   /* ---------- State and rendering ---------- */
   let findings = [], keys = new Set(), run = '', siteVerified = false;
   const openRows = new Set();
@@ -790,6 +1203,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     render();
   }
   function render() {
+    syncPrivacy();
     for (const g of document.querySelectorAll('.group')) {
       const items = findings.filter(f => f.group === g.dataset.group).sort((a, b) => SEV[b.sev] - SEV[a.sev]);
       const list = g.querySelector('.list');
@@ -829,8 +1243,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         list.append(row);
       }
     }
-    const score = findings.reduce((s, f) => s + SEV[f.sev], 0);
-    const crit = findings.filter(f => f.sev === 'crit').length;
+    renderScores();
+    // The verdict covers wallet-drainer behaviour only; malicious-code and privacy findings have their own scores.
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
+    const score = drain.reduce((s, f) => s + SEV[f.sev], 0);
+    const crit = drain.filter(f => f.sev === 'crit').length;
     const v = document.getElementById('verdict');
     const T = document.getElementById('v-title'), S = document.getElementById('v-sub');
     if (!run) return;
@@ -839,17 +1256,17 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const top = findings.slice().sort((a, b) => SEV[b.sev] - SEV[a.sev])[0];
       allBadge.textContent = findings.length || ''; allBadge.dataset.max = top ? top.sev : '';
     }
-    const counted = findings.filter(f => SEV[f.sev] > 0).sort((a, b) => SEV[b.sev] - SEV[a.sev]);
+    const counted = drain.filter(f => SEV[f.sev] > 0).sort((a, b) => SEV[b.sev] - SEV[a.sev]);
     if (crit) { v.dataset.level = 'crit'; T.textContent = 'Drainer behaviour detected'; S.textContent = crit + ' critical sign' + (crit > 1 ? 's' : '') + '. Do not connect a real wallet to this page.' + (siteVerified ? ' This is a verified domain, so the site itself may have been compromised.' : ''); }
     else if (score >= 30) { v.dataset.level = 'high'; T.textContent = 'Suspicious'; S.textContent = siteVerified ? 'Drainer traits showed up on a verified domain. That can mean the site was compromised, so treat it with caution.' : 'Some drainer traits showed up. Treat this page with caution.'; }
     else if (siteVerified) { v.dataset.level = 'ok'; T.textContent = 'Verified site · no drainer signs'; S.textContent = 'The address is the project\'s known domain and nothing suspicious was seen. Still read every request in your wallet before signing.'; }
     else { v.dataset.level = 'ok'; T.textContent = 'No drainer signs in this test'; S.textContent = 'Nothing suspicious was seen. A clean result is not a guarantee: kits can hide from tests.'; }
-    document.getElementById('v-score').textContent = 'Risk score ' + score + ' · ' + findings.length + ' finding' + (findings.length === 1 ? '' : 's') +
+    document.getElementById('v-score').textContent = 'Drainer risk score ' + score + ' · ' + drain.length + ' finding' + (drain.length === 1 ? '' : 's') +
       (counted.length ? ' · counted: ' + counted.slice(0, 4).map(f => f.title + ' (+' + SEV[f.sev] + ')').join(', ') + (counted.length > 4 ? ', …' : '') : ' · nothing counted toward the score');
   }
 
   function buildDoc(src, opts) {
-    const cfg = JSON.stringify({ run: opts.run, me: ME, autoClick: opts.autoClick, wsRelay: !!opts.wsRelay });
+    const cfg = JSON.stringify({ run: opts.run, me: ME, autoClick: opts.autoClick, wsRelay: !!opts.wsRelay, site: opts.site || '' });
     const head = ['<meta name="referrer" content="no-referrer">'];
     head.push('<script>(' + harness.toString() + ')(' + cfg + ');<\/script>');
     if (opts.base) head.push('<base href="' + opts.base.replace(/"/g, '&quot;') + '">');
@@ -880,11 +1297,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     } finally { clearTimeout(timer); }
   }
   let preferredRelay = null;
-  async function fetchVia(url) {
+  async function fetchVia(url, top) {
     const own = document.getElementById('proxy').value.trim();
     const routes = [];
     if (own) routes.push({ name: 'your relay', make: u => own + encodeURIComponent(u) });
-    if (HELPER) routes.push({ name: 'the local helper', make: u => '/fetch?url=' + encodeURIComponent(u), headers: { 'X-Bench-Token': HELPER.token }, ms: 25000 });
+    if (HELPER) routes.push({ name: 'the local helper', make: u => '/fetch?url=' + encodeURIComponent(u) + (top ? '&top=1' : ''), headers: { 'X-Bench-Token': HELPER.token }, ms: 25000 });
     else {
       routes.push({ name: 'direct', make: u => u });
       if (preferredRelay) routes.push(preferredRelay);
@@ -982,7 +1399,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (!/^https?:$/.test(u.protocol)) return showError('Only http and https addresses can be tested.');
     urlInput.value = u.href;
     showError('');
-    findings = []; keys = new Set(); scanned.clear(); scriptCount = 0; siteVerified = false;
+    findings = []; keys = new Set(); scanned.clear(); scriptCount = 0; siteVerified = false; resetPriv();
     const myRun = run = Math.random().toString(36).slice(2);
     currentUrl = u.href;
     document.getElementById('guard').hidden = true;
@@ -996,7 +1413,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     checkSite(u);
     status.textContent = 'Fetching ' + u.hostname + '…';
     let page;
-    try { page = await fetchVia(u.href); }
+    try { page = await fetchVia(u.href, true); }
     catch (e) {
       if (myRun !== run) return;
       status.textContent = 'Could not load the site';
@@ -1016,11 +1433,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     status.textContent = 'Loaded via ' + page.via + ' · running in sandbox';
     staticScan(page.text, 'page HTML');
+    scanMarkup(page.text, u);
     try {
       const doc = new DOMParser().parseFromString(page.text, 'text/html');
       doc.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(el => scanScript(el.getAttribute('src') || el.getAttribute('href'), myRun));
     } catch (_) {}
-    const html = buildDoc(page.text, { run: myRun, autoClick: document.getElementById('autoclick').checked, base: u.href, wsRelay: !!(HELPER && HELPER.specimen) });
+    const html = buildDoc(page.text, { run: myRun, autoClick: document.getElementById('autoclick').checked, base: u.href, site: u.hostname, wsRelay: !!(HELPER && HELPER.specimen) });
     if (HELPER && HELPER.specimen) {
       try {
         const r = await fetch('/stage', { method: 'POST', headers: { 'X-Bench-Token': HELPER.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ html, url: u.href }) });
@@ -1035,8 +1453,13 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const poll = async () => {
         if (myRun !== run || ++polls > 60) return;
         try {
-          const r = await fetch('/scripts', { headers: { 'X-Bench-Token': HELPER.token }, cache: 'no-store' });
-          if (r.ok) for (const s of await r.json()) { if (!scanned.has(s)) { analyzeNet({ kind: 'script', url: s }); scanScript(s, myRun); } }
+          const r = await fetch('/log', { headers: { 'X-Bench-Token': HELPER.token }, cache: 'no-store' });
+          if (r.ok) {
+            const log = await r.json();
+            if (myRun !== run) return;
+            for (const s of log.scripts) { if (!scanned.has(s)) { analyzeNet({ kind: 'script', url: s }); scanScript(s, myRun); } }
+            ingestLog(log);
+          }
         } catch (_) {}
         setTimeout(poll, 1500);
       };
@@ -1056,6 +1479,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (msg.type === 'rpc') analyzeRpc(msg.data);
     else if (msg.type === 'net') { analyzeNet(msg.data); if (msg.data.kind === 'script') scanScript(msg.data.url, run); }
     else if (msg.type === 'ui') analyzeUi(msg.data);
+    else if (msg.type === 'probe') analyzeProbe(msg.data);
     else if (msg.type === 'loaded') status.textContent = status.textContent.replace(/ · running in sandbox$/, '') + ' · page running';
     else if (msg.type === 'auto') status.textContent = msg.data.done ? 'Done · ' + msg.data.clicks + ' automatic click' + (msg.data.clicks === 1 ? '' : 's') : 'Clicking "' + msg.data.label + '"…';
   });
@@ -1156,12 +1580,14 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 '''
 
 MAX_BYTES = 25 * 1024 * 1024
+MAX_LOG = 1500
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
 TOKEN = secrets.token_urlsafe(24)
 ALLOW_PRIVATE = False
 OWN_PORTS = set()
-STATE = {"html": "<!doctype html><p>No site loaded yet.</p>", "url": "about:blank", "scripts": []}
+STATE = {"html": "<!doctype html><p>No site loaded yet.</p>", "url": "about:blank", "scripts": [],
+         "requests": [], "cookies": []}
 STATE_LOCK = threading.Lock()
 
 BOOT_HTML = """<!doctype html><meta charset="utf-8">
@@ -1300,6 +1726,18 @@ def upstream(url, method="GET", body=None, page_headers=None, page_url=None, acc
         return resp.status if hasattr(resp, "status") else resp.code, resp.headers, data, resp.geturl()
 
 
+def record(url, status, headers, size):
+    """Log a request the site made and any cookies its answer would set. The cookies are only reported to the
+    bench page; they are never stored or sent back, so the tested site still sees a visitor with no cookies."""
+    ctype = (headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    with STATE_LOCK:
+        if len(STATE["requests"]) < MAX_LOG:
+            STATE["requests"].append({"url": url, "status": status, "type": ctype, "size": size})
+        for raw in headers.get_all("Set-Cookie") or []:
+            if len(STATE["cookies"]) < MAX_LOG:
+                STATE["cookies"].append({"url": url, "raw": raw[:600]})
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -1355,21 +1793,27 @@ class BenchHandler(Base):
                 return self.send_body(403, "Refused: request did not come from the bench page.")
             if self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused: missing or wrong key. Reload the bench page.")
-            target = urllib.parse.parse_qs(parsed.query).get("url", [""])[0]
+            q = urllib.parse.parse_qs(parsed.query)
+            target = q.get("url", [""])[0]
             try:
                 status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8")
             except Exception as e:
                 return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
+            if "top" in q:  # the page being tested: start a fresh log
+                with STATE_LOCK:
+                    STATE["requests"] = []
+                    STATE["cookies"] = []
+                record(final, status, headers, len(data))
             if status >= 400:
                 return self.send_body(502, "The site answered with HTTP %d." % status)
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
-        if parsed.path == "/scripts":
+        if parsed.path == "/log":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")
             with STATE_LOCK:
-                body = json.dumps(STATE["scripts"])
+                body = json.dumps({k: STATE[k] for k in ("scripts", "requests", "cookies")})
             return self.send_body(200, body, "application/json", {"Cache-Control": "no-store"})
         if parsed.path == "/favicon.ico":
             return self.send_body(204, b"")
@@ -1435,6 +1879,7 @@ class SpecimenHandler(Base):
             if k.lower() not in DROP_RESP and not k.lower().startswith("access-control-"):
                 extra[k] = v
         extra["Cache-Control"] = "no-store"  # every test run sees every file fresh
+        record(final, status, headers, len(data))
         ctype = (headers.get("Content-Type") or "").lower()
         if status < 400 and ("javascript" in ctype or "ecmascript" in ctype):
             with STATE_LOCK:

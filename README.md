@@ -8,6 +8,8 @@ Drainer Test Bench loads a live site into a sandbox, gives it a fake "honeypot" 
 - **What it asked the wallet to sign**: Permit and Permit2 signatures, Seaport orders, token and NFT approvals and transfers, decoded into plain words such as "lets 0xdead… move USDT, USDC and WETH, unlimited".
 - **Red flags in the code**: known drainer infrastructure, Telegram reporting, the StepDrainer `-.php` logging pattern, drainer kit names, obfuscation and anti-debugging tricks, in the page and in every script file it loads.
 - **Where it tried to send data**, including whether it leaked the wallet address to another domain.
+- **Malicious JavaScript** (own score): packed or JSFuck-encoded code, runtime-downloaded code, cryptominers, clipboard hijackers that swap a copied wallet address, keyloggers and card skimmers, hidden iframes, Discord webhooks, bare-IP connections and script hosts from known supply-chain attacks such as polyfill.io.
+- **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted.
 - **The site address**: MetaMask's phishing blocklist, look-alike domains of about 25 popular projects, lure words and throwaway hosting.
 
 Building blocks every DEX uses (Permit2, unlimited approvals to Permit2, Uniswap routers) are listed for context and do not count against a site.
@@ -63,6 +65,8 @@ Options:
 - A clean result means "nothing seen", not "safe". Kits can hide when they detect a sandbox, a fake wallet, an empty balance or a test address.
 - The site runs at a local test address, so sites that check their own address or block unknown visitors may behave differently.
 - Drainers also abuse your real wallet's genuine prompts. Always read the request in your wallet's own window before signing.
+- The malicious-code and privacy scores are heuristics from one page load. Pages behave differently after consent banners, logins and scrolling, and a low risk or high privacy score is not a guarantee. Cookies and background requests are visible only through the local helper.
+- The tracker list is a short built-in one. It does not cover every tracker.
 - Contract names (Permit2, Uniswap routers) and token names are recognized on Ethereum mainnet addresses.
 
 ## Project layout

@@ -20,7 +20,8 @@ Safety rules built in:
   * The bench's own fetch route needs a random key that only the bench page knows.
   * Nothing is fetched from your local network (router, NAS, this helper itself),
     unless you start it with --allow-private (to test your own local dApp).
-  * No cookies are sent to or kept from the tested site.
+  * No cookies are sent to or kept from the tested site. Cookies its answers would set are only listed for
+    the bench page's privacy report.
 
 Needs only Python 3.8+, no extra packages.
 """
@@ -41,12 +42,14 @@ import webbrowser
 BENCH_HTML = r'''@@BENCH_HTML@@'''
 
 MAX_BYTES = 25 * 1024 * 1024
+MAX_LOG = 1500
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
 TOKEN = secrets.token_urlsafe(24)
 ALLOW_PRIVATE = False
 OWN_PORTS = set()
-STATE = {"html": "<!doctype html><p>No site loaded yet.</p>", "url": "about:blank", "scripts": []}
+STATE = {"html": "<!doctype html><p>No site loaded yet.</p>", "url": "about:blank", "scripts": [],
+         "requests": [], "cookies": []}
 STATE_LOCK = threading.Lock()
 
 BOOT_HTML = """<!doctype html><meta charset="utf-8">
@@ -185,6 +188,18 @@ def upstream(url, method="GET", body=None, page_headers=None, page_url=None, acc
         return resp.status if hasattr(resp, "status") else resp.code, resp.headers, data, resp.geturl()
 
 
+def record(url, status, headers, size):
+    """Log a request the site made and any cookies its answer would set. The cookies are only reported to the
+    bench page; they are never stored or sent back, so the tested site still sees a visitor with no cookies."""
+    ctype = (headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    with STATE_LOCK:
+        if len(STATE["requests"]) < MAX_LOG:
+            STATE["requests"].append({"url": url, "status": status, "type": ctype, "size": size})
+        for raw in headers.get_all("Set-Cookie") or []:
+            if len(STATE["cookies"]) < MAX_LOG:
+                STATE["cookies"].append({"url": url, "raw": raw[:600]})
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -240,21 +255,27 @@ class BenchHandler(Base):
                 return self.send_body(403, "Refused: request did not come from the bench page.")
             if self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused: missing or wrong key. Reload the bench page.")
-            target = urllib.parse.parse_qs(parsed.query).get("url", [""])[0]
+            q = urllib.parse.parse_qs(parsed.query)
+            target = q.get("url", [""])[0]
             try:
                 status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8")
             except Exception as e:
                 return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
+            if "top" in q:  # the page being tested: start a fresh log
+                with STATE_LOCK:
+                    STATE["requests"] = []
+                    STATE["cookies"] = []
+                record(final, status, headers, len(data))
             if status >= 400:
                 return self.send_body(502, "The site answered with HTTP %d." % status)
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
-        if parsed.path == "/scripts":
+        if parsed.path == "/log":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")
             with STATE_LOCK:
-                body = json.dumps(STATE["scripts"])
+                body = json.dumps({k: STATE[k] for k in ("scripts", "requests", "cookies")})
             return self.send_body(200, body, "application/json", {"Cache-Control": "no-store"})
         if parsed.path == "/favicon.ico":
             return self.send_body(204, b"")
@@ -320,6 +341,7 @@ class SpecimenHandler(Base):
             if k.lower() not in DROP_RESP and not k.lower().startswith("access-control-"):
                 extra[k] = v
         extra["Cache-Control"] = "no-store"  # every test run sees every file fresh
+        record(final, status, headers, len(data))
         ctype = (headers.get("Content-Type") or "").lower()
         if status < 400 and ("javascript" in ctype or "ecmascript" in ctype):
             with STATE_LOCK:

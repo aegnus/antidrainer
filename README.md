@@ -9,7 +9,8 @@ Sniff Test loads a live site into a sandbox, gives it a fake "honeypot" wallet t
 - **Red flags in the code**: known drainer infrastructure, Telegram reporting, the StepDrainer `-.php` logging pattern, drainer kit names, obfuscation and anti-debugging tricks, in the page and in every script file it loads.
 - **Where it tried to send data**, including whether it leaked the wallet address to another domain.
 - **Malicious JavaScript** (own score): packed or JSFuck-encoded code, runtime-downloaded code, cryptominers, clipboard hijackers that swap a copied wallet address, keyloggers and card skimmers, hidden iframes, Discord webhooks, bare-IP connections and script hosts from known supply-chain attacks such as polyfill.io.
-- **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted.
+- **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted. The test visitor also sends a Global Privacy Control opt-out (`Sec-GPC: 1` and `navigator.globalPrivacyControl`), and the report notes whether the site reads it, publishes `/.well-known/gpc.json`, or tracks anyway.
+- **JSON report**: the **Export report (JSON)** button saves the scores, findings, cookies, trackers and contacted domains as a file.
 - **The site address**: MetaMask's phishing blocklist, ScamSniffer's scam-domain list (also checked against every domain the page contacts), look-alike domains of about 25 popular projects, lure words and throwaway hosting.
 
 Building blocks every DEX uses (Permit2, unlimited approvals to Permit2, Uniswap routers) are listed for context and do not count against a site.
@@ -67,6 +68,7 @@ Options:
 - Drainers also abuse your real wallet's genuine prompts. Always read the request in your wallet's own window before signing.
 - The malicious-code and privacy scores are heuristics from one page load. Pages behave differently after consent banners, logins and scrolling, and a low risk or high privacy score is not a guarantee. Cookies and background requests are visible only through the local helper.
 - Trackers are matched against a short built-in list plus EasyPrivacy's domain and path rules. Rules that depend on wildcards, regexes or the page being visited are skipped, so some trackers go unseen.
+- The Global Privacy Control check only shows that trackers loaded with no sign the signal was read. It cannot prove a site ignored it. The header is sent only through the local helper.
 - Each test downloads the MetaMask, ScamSniffer and EasyPrivacy lists (about 11 MB, cached in the browser for a day), so GitHub and easylist.to see your IP address. Nothing from the tested site is sent to them.
 - Contract names (Permit2, Uniswap routers) and token names are recognized on Ethereum mainnet addresses.
 

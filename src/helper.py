@@ -171,6 +171,7 @@ def upstream(url, method="GET", body=None, page_headers=None, page_url=None, acc
     for k, v in (page_headers or {}).items():
         if k.lower() not in DROP_REQ and not k.lower().startswith(("x-bench", "sec-")):
             headers[k] = v
+    headers["Sec-GPC"] = "1"  # Global Privacy Control: the test visitor opts out of tracking and data sale
     site_origin = origin_of(page_url or "")
     if site_origin:
         headers["Referer"] = page_url

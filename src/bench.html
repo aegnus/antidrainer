@@ -104,6 +104,8 @@ kbd { font-size: 11.5px; color: var(--label-3); border: .5px solid var(--sep); b
 .btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--label)); }
 .btn-secondary { background: var(--fill); color: var(--label); }
 .btn .spin { display: none; }
+.export-row { display: flex; justify-content: flex-end; margin: -4px 0 12px; }
+.btn:disabled { opacity: .45; cursor: default; }
 body.busy #run .spin { display: block; }
 body.busy #run .go { display: none; }
 @keyframes rot { to { transform: rotate(360deg); } }
@@ -341,6 +343,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <div class="scard" id="sc-priv" data-level="none"><span class="sc-label">Privacy</span><span class="sc-num" id="sc-priv-num">–</span><span class="sc-sub" id="sc-priv-sub">Not tested yet</span></div>
     </div>
 
+    <div class="export-row"><button type="button" class="btn btn-secondary" id="export" disabled>Export report (JSON)</button></div>
+
     <div class="intro">
       <h3 class="section-head">How it works</h3>
       <div class="inset">
@@ -520,7 +524,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     return '';
   };
   let P = null;
-  const resetPriv = () => { P = { scam: new Set(), hosts: new Map(), trackers: new Map(), code: new Map(), cookies: new Map(), fp: new Map(), pixels: new Map(), reqs: new Set(), cookieCount: 0, wasm: new Set(), worker: new Set(), sri: new Set() }; };
+  const resetPriv = () => { P = { gpcRead: new Set(), gpcFile: null, scam: new Set(), hosts: new Map(), trackers: new Map(), code: new Map(), cookies: new Map(), fp: new Map(), pixels: new Map(), reqs: new Set(), cookieCount: 0, wasm: new Set(), worker: new Set(), sri: new Set() }; };
   resetPriv();
 
   /* ---------- Harness: runs inside the sandbox before the page's own code ---------- */
@@ -697,6 +701,13 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       };
       for (const p of ['hardwareConcurrency', 'deviceMemory', 'plugins', 'languages', 'platform', 'maxTouchPoints', 'userAgentData']) watch(window.Navigator && Navigator.prototype, p);
       for (const p of ['colorDepth', 'pixelDepth', 'availWidth', 'availHeight']) watch(window.Screen && Screen.prototype, p);
+    });
+    // Global Privacy Control: the test visitor says "do not sell or share my data". Note who reads the signal.
+    guard(() => {
+      Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { configurable: true, enumerable: true, get() {
+        guard(() => { const by = callerOf(); probe('gpc', by, { api: 'gpc', by }); });
+        return true;
+      } });
     });
 
     // Cookies written by scripts, keystroke listeners, clipboard writes.
@@ -1059,6 +1070,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   };
   function analyzeProbe(d) {
     if (d.api === 'cookie') return parseCookie(d.raw, pageHost(), d.by);
+    if (d.api === 'gpc') { P.gpcRead.add(d.by); return render(); }
     if (d.api === 'pixel') { P.pixels.set(d.url, 'seen in page'); noteHost(hostOf(d.url), d.url, 'image'); return render(); }
     if (d.api === 'clip') {
       const isAddr = /^(0x[0-9a-fA-F]{40}|bc1[a-z0-9]{20,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|T[A-Za-z1-9]{33})$/.test(d.text.trim());
@@ -1150,6 +1162,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const n = P.hosts.size;
       push(n >= 15 ? 'med' : 'info', 'Contacts ' + n + ' third-party domain' + (n > 1 ? 's' : ''), n >= 15 ? 'Every extra domain learns your IP address and which page you visited.' : 'Other domains the page loads from. Each one learns your IP address and the page you visited.', list([...P.hosts].map(([h, how]) => h + '  (' + how + ')'), 25));
     }
+    // Global Privacy Control: a legal opt-out signal in several US states. Judged only once the page has had time to run.
+    const gpcSent = HELPER ? 'the Sec-GPC header and navigator.globalPrivacyControl' : 'navigator.globalPrivacyControl (the header needs the local helper)';
+    const trackedDespite = thirdTrack.length || [...P.trackers.values()].some(t => t.cat === 'ads' || t.cat === 'replay');
+    if (P.gpcRead.size || P.gpcFile) push('info', 'Site knows about Global Privacy Control', 'The test sent ' + gpcSent + '.' + (P.gpcFile ? ' The site publishes /.well-known/gpc.json.' : '') + (P.gpcRead.size ? ' A script read the signal.' : ''), list([...P.gpcRead].map(by => by === 'first-party' ? 'the site\'s own script' : by)));
+    if (trackedDespite && !P.gpcRead.size && !P.gpcFile) push('med', 'No sign the Global Privacy Control opt-out was honoured', 'The test sent ' + gpcSent + ', yet advertising or recording trackers still loaded and no script read the signal.', '');
     if (FEED.easy) push('info', 'Tracker lists used', 'Built-in list of about 100 domains plus EasyPrivacy (' + FEED.easy.count.toLocaleString() + ' domain and path rules, ' + FEED.status.easy + ').', '');
     else push('info', 'EasyPrivacy list not loaded', 'Only the short built-in tracker list was used. ' + (FEED.status.easy || ''), '');
     if (!HELPER) push('info', 'Limited view without the local helper', 'Cookies and background requests are only visible through the helper. Only the page markup and script behaviour were checked.', '');
@@ -1157,7 +1174,41 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   }
 
   const PRIV_PEN = { crit: 30, high: 15, med: 6, info: 0 };
+  function exportReport() {
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
+    const js = findings.filter(f => f.group === 'js'), pr = findings.filter(f => f.group === 'priv');
+    const privScore = Math.max(0, 100 - pr.reduce((s, f) => s + PRIV_PEN[f.sev], 0));
+    const report = {
+      tool: 'Sniff Test: Security & Privacy Checker',
+      exportedAt: new Date().toISOString(),
+      url: currentUrl,
+      mode: HELPER ? 'local helper' : 'browser only',
+      verifiedDomain: siteVerified,
+      scores: {
+        drainerRisk: drain.reduce((s, f) => s + SEV[f.sev], 0),
+        maliciousCodeRisk: Math.min(100, js.reduce((s, f) => s + SEV[f.sev], 0)),
+        privacy: { score: privScore, grade: privScore >= 90 ? 'A' : privScore >= 75 ? 'B' : privScore >= 60 ? 'C' : privScore >= 40 ? 'D' : 'F' }
+      },
+      findings: findings.map(({ group, sev, title, detail, evidence }) => ({ group, severity: sev, title, detail, evidence })),
+      privacy: {
+        cookies: [...P.cookies.values()].map(c => ({ name: c.name, host: c.host, thirdParty: c.third, tracking: c.tracking, days: c.days, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, setBy: c.by })),
+        trackers: [...P.trackers].map(([host, t]) => ({ host, company: t.company, kind: t.cat })),
+        thirdPartyHosts: [...P.hosts.keys()],
+        pixels: [...P.pixels.keys()],
+        globalPrivacyControl: { readBy: [...P.gpcRead], wellKnownFile: P.gpcFile }
+      },
+      lists: FEED.status,
+      note: 'Heuristics from a single page load. A clean result is not a guarantee.'
+    };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    a.download = 'sniff-test-' + (pageHost() || 'report') + '.json';
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  document.getElementById('export').addEventListener('click', exportReport);
   function renderScores() {
+    document.getElementById('export').disabled = !run;
     const set = (id, level, num, sub) => { const c = document.getElementById('sc-' + id); c.dataset.level = level; document.getElementById('sc-' + id + '-num').innerHTML = num; document.getElementById('sc-' + id + '-sub').textContent = sub; };
     if (!run) { set('js', 'none', '–', 'Not tested yet'); set('priv', 'none', '–', 'Not tested yet'); return; }
     const js = findings.filter(f => f.group === 'js').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
@@ -1490,6 +1541,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       } catch (_) {}
     }
     status.textContent = 'Loaded via ' + page.via + ' · running in sandbox';
+    if (HELPER) getText('/fetch?url=' + encodeURIComponent(u.origin + '/.well-known/gpc.json'), 10000, { 'X-Bench-Token': HELPER.token })
+      .then(r => { if (myRun === run && JSON.parse(r.text).gpc === true) { P.gpcFile = true; render(); } }).catch(() => {});
     staticScan(page.text, 'page HTML');
     scanMarkup(page.text, u);
     try {

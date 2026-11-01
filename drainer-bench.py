@@ -278,6 +278,14 @@ a.f-link { color: var(--accent); text-decoration: underline; text-underline-offs
 .tk-f { color: #0a7c72; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tk-s { color: #f4a26b; } :root:not([data-theme="light"]) .tk-n, :root:not([data-theme="light"]) .tk-v { color: #6cb6ff; } :root:not([data-theme="light"]) .tk-k { color: #d2a8ff; } :root:not([data-theme="light"]) .tk-f { color: #3fc9b8; } }
 :root[data-theme="dark"] .tk-s { color: #f4a26b; } :root[data-theme="dark"] .tk-n, :root[data-theme="dark"] .tk-v { color: #6cb6ff; } :root[data-theme="dark"] .tk-k { color: #d2a8ff; } :root[data-theme="dark"] .tk-f { color: #3fc9b8; }
+.f-advice { margin: 0 14px 12px 44px; font-size: 12.5px; line-height: 1.5; color: var(--label-2); }
+.f-advice strong { color: var(--label); font-weight: 600; }
+.aftercare { margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: var(--surface); border: .5px solid var(--sep); font-size: 13px; line-height: 1.5; }
+.aftercare[hidden] { display: none; }
+.aftercare h3 { margin: 0 0 6px; font-size: 14px; }
+.aftercare ol { margin: 0; padding-left: 20px; color: var(--label-2); }
+.aftercare li { margin: 3px 0; }
+.aftercare a { color: var(--accent); }
 .f-ev { display: block; margin: 0 14px 12px 44px; font-size: 12px; line-height: 1.5; padding: 9px 11px; border-radius: 8px; background: var(--surface-2); border: .5px solid var(--sep); white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto; color: var(--label); }
 .limits-link { justify-self: start; margin-left: 16px; background: none; border: 0; padding: 0; color: var(--accent); font-size: 13.5px; font-weight: 500; cursor: pointer; }
 
@@ -399,6 +407,17 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         <p class="v-sub" id="v-sub">Enter a site address and press Test. Findings appear here as the site runs.</p>
         <span class="score" id="v-score"></span>
       </div>
+    </div>
+
+    <div class="aftercare" id="aftercare" hidden>
+      <h3>If you already connected a wallet to this site</h3>
+      <ol>
+        <li>Do not sign anything else. Disconnect the site in your wallet's connected-sites list.</li>
+        <li>Review and revoke token approvals with <a href="https://revoke.cash/" target="_blank" rel="noopener noreferrer">Revoke.cash</a> or <a href="https://etherscan.io/tokenapprovalchecker" target="_blank" rel="noopener noreferrer">Etherscan's approval checker</a>.</li>
+        <li>Check on a block explorer whether your address now shows delegated code (EIP-7702). If it does, move your funds to a new wallet.</li>
+        <li>If your recovery phrase was entered anywhere, create a new wallet and move everything now.</li>
+        <li>Report the site on <a href="https://www.chainabuse.com/" target="_blank" rel="noopener noreferrer">Chainabuse</a> to help others.</li>
+      </ol>
     </div>
 
     <div class="scorecards" id="scorecards">
@@ -562,7 +581,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   const isIp = h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
   const pageHost = () => { try { return new URL(currentUrl).hostname.toLowerCase(); } catch (_) { return ''; } };
   // Downloaded lists (see loadFeeds): ScamSniffer scam domains and EasyPrivacy tracker rules.
-  const FEED = { scam: null, easy: null, status: {} };
+  const FEED = { scam: null, easy: null, addr: null, status: {} };
   const classify = host => {
     const parts = String(host).toLowerCase().split('.');
     for (let i = 0; i < parts.length - 1; i++) { const t = TRACKERS.get(parts.slice(i).join('.')); if (t) return t; }
@@ -579,6 +598,15 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       }
     } catch (_) {}
     return null;
+  };
+  const ADDR_RE = /0x[0-9a-fA-F]{40}\b/g;
+  const addrHits = text => {
+    if (!FEED.addr) return [];
+    const hits = new Set();
+    for (const m of String(text).matchAll(ADDR_RE)) { const a = m[0].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
+    // Addresses inside ABI-encoded call data are padded to 32 bytes.
+    for (const m of String(text).matchAll(/0{24}([0-9a-fA-F]{40})/g)) { const a = '0x' + m[1].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
+    return [...hits];
   };
   const scamHit = host => {
     if (!FEED.scam) return '';
@@ -645,6 +673,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         case 'eth_sign': case 'personal_sign': case 'eth_signTypedData': case 'eth_signTypedData_v3': case 'eth_signTypedData_v4': return fakeSig;
         case 'eth_sendTransaction': return '0x' + 'ab'.repeat(32);
         case 'wallet_sendCalls': return { id: '0x01' };
+        case 'eth_signTransaction': case 'eth_signAuthorization': case 'wallet_signAuthorization': case 'wallet_upgradeAccount': return fakeSig;
         default: return null;
       }
     }
@@ -937,6 +966,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       if (m) add('src', r.sev, r.title, r.detail, where + excerpt(src, m.index, m[0].length));
     }
     jsScan(src, file);
+    const bad = addrHits(src);
+    if (bad.length) add('src', 'crit', 'Code contains a known scam address', 'A wallet address hard-coded in ' + file + ' is listed in ScamSniffer\'s scam-address database. Drainers embed their receiving wallets this way.', bad.slice(0, 5).join('\n'), 'Do not connect a wallet to this site.');
   }
   const excerpt = (s, i, len) => s.slice(Math.max(0, i - 50), i + len + 50).replace(/\s+/g, ' ').trim();
 
@@ -1036,8 +1067,14 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if ((data === '0x' || data === '') && v > 0n) return ['med', pre + 'Sends ' + eth(tx.value), 'Plain transfer of native coins to ' + short(tx.to) + '.'];
     return ['info', pre + 'Contract call ' + (sel.length === 10 ? sel : ''), (v > 0n ? 'Sends ' + eth(tx.value) + ' to ' : 'Calls ') + short(tx.to) + '.'];
   }
+  const AFTERCARE_ADVICE = 'Do not sign this. If you already did, see the steps under the verdict.';
   function analyzeRpc({ method, params }) {
     const p = Array.isArray(params) ? params : [];
+    let blob = ''; try { blob = JSON.stringify(p); } catch (_) {}
+    for (const a of addrHits(blob)) add('rpc', 'crit', 'Request involves a known scam address', a + ' is listed in ScamSniffer\'s database of crypto scam addresses.', a + '\n' + method, AFTERCARE_ADVICE);
+    // EIP-7702: the account is turned into a smart account running a contract chosen by the site.
+    if (/authoriz|delegat|7702|upgradeaccount/i.test(String(method)) && method !== 'wallet_grantPermissions' || /"authorizationList"|"type":"0x4"/i.test(blob))
+      add('rpc', siteVerified ? 'high' : 'crit', 'Asks to delegate your account to a contract (EIP-7702)', 'Delegation lets a contract run code as your wallet. Drainers use it to approve and sweep many tokens in one step. Few sites need it.', pretty(p), AFTERCARE_ADVICE);
     switch (method) {
       case 'eth_requestAccounts': case 'enable': case 'wallet_requestPermissions':
         return add('rpc', 'info', 'Asked to connect the wallet', 'The page requested the wallet address.', method);
@@ -1239,8 +1276,21 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (FEED.easy) push('info', 'Tracker lists used', 'Built-in list of about 100 domains plus EasyPrivacy (' + FEED.easy.count.toLocaleString() + ' domain and path rules, ' + FEED.status.easy + ').', '');
     else push('info', 'EasyPrivacy list not loaded', 'Only the short built-in tracker list was used. ' + (FEED.status.easy || ''), '');
     if (!HELPER) push('info', 'Limited view without the local helper', 'Cookies and background requests are only visible through the helper. Only the page markup and script behaviour were checked.', '');
+    for (const f of out) { const a = PRIV_ADVICE.find(([re]) => re.test(f.title)); if (a) f.advice = a[1]; }
     findings.push(...out);
   }
+  const PRIV_ADVICE = [
+    [/third-party tracking cookie|other third-party cookie/, 'Block third-party cookies in your browser settings. Firefox and Safari already do by default.'],
+    [/tracking cookie.* on the site/, 'A tracker blocker such as uBlock Origin stops the scripts that set these. You can also clear the site\'s cookies after each visit.'],
+    [/advertising tracker|other trackers from the EasyPrivacy/, 'Install a tracker blocker such as uBlock Origin or use a browser with built-in blocking (Firefox, Brave).'],
+    [/session recorder/, 'Block the recorder with a tracker blocker, and avoid typing anything sensitive on this site until you have.'],
+    [/analytics tracker|social-media tracker/, 'A tracker blocker stops these. Turning on your browser\'s Global Privacy Control signal asks sites not to sell or share your data.'],
+    [/fingerprint|Canvas|Font|Audio|graphics card|device properties|WebRTC/, 'Use Firefox with fingerprinting protection or Brave. A VPN hides your network address but not the device traits these scripts read.'],
+    [/keystrokes/, 'Do not type passwords or personal details on this page while the script is active. A script blocker stops it.'],
+    [/tracking pixel/, 'Tracker blockers stop these image requests. Avoid loading remote images in email.'],
+    [/Global Privacy Control opt-out/, 'Turn on Global Privacy Control in Firefox, Brave or DuckDuckGo. Sites in some US states must honour it.'],
+    [/third-party domain/, 'Every extra domain learns your network address and the page you visited. A tracker blocker cuts most of them.']
+  ];
 
   const PRIV_PEN = { crit: 30, high: 15, med: 6, info: 0 };
   function exportReport() {
@@ -1368,11 +1418,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   const openRows = new Set();
   const frame = document.getElementById('frame');
   function resetFrame() { frame.removeAttribute('srcdoc'); frame.setAttribute('sandbox', 'allow-scripts'); frame.src = 'about:blank'; }
-  function add(group, sev, title, detail, evidence) {
+  function add(group, sev, title, detail, evidence, advice) {
     const k = group + '|' + title + '|' + detail;
     if (keys.has(k)) return;
     keys.add(k);
-    findings.push({ group, sev, title, detail, evidence });
+    findings.push({ group, sev, title, detail, evidence, advice });
     render();
   }
   function render() {
@@ -1402,11 +1452,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         trail.insertAdjacentHTML('beforeend', '<svg class="ico chev"><use href="#i-chev"/></svg>');
         head.append(dot, main, trail);
         row.append(head);
-        if (f.evidence) {
+        if (f.evidence || f.advice) {
           const more = document.createElement('div'); more.className = 'f-more';
           const inner = document.createElement('div');
-          const e = document.createElement('code'); e.className = 'f-ev'; e.append(...linkify(f.evidence));
-          inner.append(e); more.append(inner); row.append(more);
+          if (f.evidence) { const e = document.createElement('code'); e.className = 'f-ev'; e.append(...linkify(f.evidence)); inner.append(e); }
+          if (f.advice) { const a = document.createElement('p'); a.className = 'f-advice'; const b = document.createElement('strong'); b.textContent = 'What you can do: '; a.append(b, f.advice); inner.append(a); }
+          more.append(inner); row.append(more);
           head.addEventListener('click', () => {
             const open = row.classList.toggle('open');
             head.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -1429,6 +1480,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const top = findings.slice().sort((a, b) => SEV[b.sev] - SEV[a.sev])[0];
       allBadge.textContent = findings.length || ''; allBadge.dataset.max = top ? top.sev : '';
     }
+    document.getElementById('aftercare').hidden = !(crit || score >= 30);
     const counted = drain.filter(f => SEV[f.sev] > 0).sort((a, b) => SEV[b.sev] - SEV[a.sev]);
     if (crit) { v.dataset.level = 'crit'; T.textContent = 'Drainer behaviour detected'; S.textContent = crit + ' critical sign' + (crit > 1 ? 's' : '') + '. Do not connect a real wallet to this page.' + (siteVerified ? ' This is a verified domain, so the site itself may have been compromised.' : ''); }
     else if (score >= 30) { v.dataset.level = 'high'; T.textContent = 'Suspicious'; S.textContent = siteVerified ? 'Drainer traits showed up on a verified domain. That can mean the site was compromised, so treat it with caution.' : 'Some drainer traits showed up. Treat this page with caution.'; }
@@ -1502,7 +1554,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   /* ---------- Downloaded lists (cached in the browser for a day) ---------- */
   const FEEDS = {
     scam: 'https://raw.githubusercontent.com/scamsniffer/scam-database/main/blacklist/domains.json',
-    easy: 'https://easylist.to/easylist/easyprivacy.txt'
+    easy: 'https://easylist.to/easylist/easyprivacy.txt',
+    addr: 'https://raw.githubusercontent.com/scamsniffer/scam-database/main/blacklist/address.json'
   };
   const FEED_TTL = 24 * 3600 * 1000;
   const idb = (mode, fn) => new Promise((resolve, reject) => {
@@ -1558,10 +1611,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       await Promise.all([
         feedText('scam').then(r => { FEED.scam = new Set(JSON.parse(r.text).map(d => String(d).toLowerCase())); FEED.status.scam = r.note; })
           .catch(e => { FEED.status.scam = 'could not load: ' + e.message; }),
+        feedText('addr').then(r => { FEED.addr = new Set(JSON.parse(r.text).map(a => String(a).toLowerCase())); FEED.status.addr = r.note; })
+          .catch(e => { FEED.status.addr = 'could not load: ' + e.message; }),
         feedText('easy').then(r => { FEED.easy = parseEasyPrivacy(r.text); FEED.status.easy = r.note; })
           .catch(e => { FEED.status.easy = 'could not load: ' + e.message; })
       ]);
-      if (!FEED.scam || !FEED.easy) feedsPromise = null;  // retry on the next test
+      if (!FEED.scam || !FEED.easy || !FEED.addr) feedsPromise = null;  // retry on the next test
     })();
     return feedsPromise;
   }
@@ -1610,6 +1665,31 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (bad) add('site', 'crit', 'On the ScamSniffer scam list', bad + ' is listed in ScamSniffer\'s database of crypto scam domains.', host);
     else if (FEED.scam) add('site', 'info', 'Not on the ScamSniffer scam list', FEED.scam.size.toLocaleString() + ' scam domains checked (' + FEED.status.scam + '). New sites appear daily, so this proves little.', host);
     else add('site', 'info', 'Could not check the ScamSniffer scam list', FEED.status.scam || '', '');
+    domainAge(host).catch(() => {});
+  }
+  // Registration date from the public RDAP service. A domain days old that asks for a wallet is a classic drainer sign.
+  const ageCache = new Map();
+  async function domainAge(host) {
+    if (!host || isIp(host) || !host.includes('.') || /\.(localhost|test|local|internal)$/.test(host)) return;
+    const dom = baseDomain(host), myRun = run;
+    let when = ageCache.get(dom);
+    if (when === undefined) {
+      try {
+        const url = 'https://rdap.org/domain/' + encodeURIComponent(dom);
+        const res = HELPER ? await getText('/fetch?url=' + encodeURIComponent(url), 20000, { 'X-Bench-Token': HELPER.token }) : await getText(url, 20000);
+        const ev = (JSON.parse(res.text).events || []).find(e => e.eventAction === 'registration');
+        when = ev && ev.eventDate ? Date.parse(ev.eventDate) : null;
+      } catch (_) { when = null; }
+      ageCache.set(dom, when);
+    }
+    if (myRun !== run) return;
+    if (!when || isNaN(when)) return add('site', 'info', 'Domain age unknown', 'The registration date for ' + dom + ' could not be looked up. Some country domains do not publish it.', dom);
+    const days = Math.floor((Date.now() - when) / 86400000);
+    const age = days < 60 ? days + ' day' + (days === 1 ? '' : 's') : days < 730 ? Math.round(days / 30) + ' months' : Math.round(days / 365) + ' years';
+    const on = new Date(when).toISOString().slice(0, 10);
+    if (days < 30) add('site', siteVerified ? 'med' : 'high', 'Domain registered ' + age + ' ago', dom + ' was registered on ' + on + '. Drainer sites are usually days old and replaced often.', dom, 'Compare the address with the project\'s official links on its verified social accounts before connecting a wallet.');
+    else if (days < 180) add('site', siteVerified ? 'info' : 'med', 'Young domain (' + age + ')', dom + ' was registered on ' + on + '. New does not mean bad, but most scam sites are under a few months old.', dom);
+    else add('site', 'info', 'Domain registered ' + age + ' ago', dom + ' was registered on ' + on + '.', dom);
   }
 
   /* ---------- Script files: download and scan ---------- */

@@ -12,7 +12,10 @@ Sniff Test loads a live site into a sandbox, gives it a fake "honeypot" wallet t
 - **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted. The test visitor also sends a Global Privacy Control opt-out (`Sec-GPC: 1` and `navigator.globalPrivacyControl`), and the report notes whether the site reads it, publishes `/.well-known/gpc.json`, or tracks anyway.
 - **JSON report**: the **Export report (JSON)** button saves the scores, findings, cookies, trackers and contacted domains as a file.
 - **Clickable addresses**: web addresses in the results are links. Clicking one shows its source over the sandbox pane, read-only, with JavaScript colour-coded. The bench downloads it through the helper and never runs it, and nothing opens in a new browser tab.
-- **The site address**: MetaMask's phishing blocklist, ScamSniffer's scam-domain list (also checked against every domain the page contacts), look-alike domains of about 25 popular projects, lure words and throwaway hosting.
+- **Account delegation (EIP-7702)**: requests to turn your wallet into a smart account that runs a contract chosen by the site, a technique drainers have started to use.
+- **Known scam addresses**: every address in a signature request, and every address hard-coded in the page or its scripts, is checked against ScamSniffer's scam-address list.
+- **After a bad result**: a checklist for people who already connected (revoke approvals, check for delegation, move funds, report), and a "What you can do" tip on each privacy finding.
+- **The site address**: domain age from the public RDAP registry (days-old domains are a classic drainer sign), MetaMask's phishing blocklist, ScamSniffer's scam-domain list (also checked against every domain the page contacts), look-alike domains of about 25 popular projects, lure words and throwaway hosting.
 
 Building blocks every DEX uses (Permit2, unlimited approvals to Permit2, Uniswap routers) are listed for context and do not count against a site.
 
@@ -70,7 +73,8 @@ Options:
 - The malicious-code and privacy scores are heuristics from one page load. Pages behave differently after consent banners, logins and scrolling, and a low risk or high privacy score is not a guarantee. Cookies and background requests are visible only through the local helper.
 - Trackers are matched against a short built-in list plus EasyPrivacy's domain and path rules. Rules that depend on wildcards, regexes or the page being visited are skipped, so some trackers go unseen.
 - The Global Privacy Control check only shows that trackers loaded with no sign the signal was read. It cannot prove a site ignored it. The header is sent only through the local helper.
-- Each test downloads the MetaMask, ScamSniffer and EasyPrivacy lists (about 11 MB, cached in the browser for a day), so GitHub and easylist.to see your IP address. Nothing from the tested site is sent to them.
+- Each test downloads the MetaMask, ScamSniffer (domains and addresses) and EasyPrivacy lists (about 11 MB, cached in the browser for a day), so GitHub and easylist.to see your IP address. The domain-age lookup sends the tested site's registrable domain to rdap.org and the domain's registry. Nothing else from the tested site is sent out.
+- Domain age is missing for domains whose registry does not publish it, and the delegation check only sees requests the page makes to the test wallet.
 - Contract names (Permit2, Uniswap routers) and token names are recognized on Ethereum mainnet addresses.
 
 ## Project layout

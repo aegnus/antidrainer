@@ -88,6 +88,7 @@ SOFTWARE.
 ## Data used at runtime (not bundled)
 
 - MetaMask eth-phishing-detect list, downloaded when a test runs: https://github.com/MetaMask/eth-phishing-detect
-- ScamSniffer scam-database domain list (GPL-3.0), downloaded when a test runs and cached in the browser: https://github.com/scamsniffer/scam-database
+- ScamSniffer scam-database domain and address lists (GPL-3.0), downloaded when a test runs and cached in the browser: https://github.com/scamsniffer/scam-database
+- RDAP domain registration data via rdap.org, looked up per test and not stored: https://about.rdap.org/
 - EasyPrivacy tracking-protection list, downloaded when a test runs and cached in the browser. See its licence: https://easylist.to/pages/licence.html
 - StepDrainer indicator domains in `src/bench.html` come from public threat reports (AlienVault OTX, published April 2026, TLP:WHITE).

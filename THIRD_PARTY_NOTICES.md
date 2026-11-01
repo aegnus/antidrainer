@@ -1,6 +1,6 @@
 # Third-party notices
 
-Drainer Test Bench includes material adapted from the projects below. Their licenses are reproduced in full.
+Sniff Test includes material adapted from the projects below. Their licenses are reproduced in full.
 
 ## shadcn/ui
 

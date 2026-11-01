@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2026 Drainer Test Bench contributors
+# Copyright (c) 2026 Sniff Test contributors
 """Build the single-file helper.
 
 Embeds src/bench.html into src/helper.py and writes drainer-bench.py, the one file users download and run.

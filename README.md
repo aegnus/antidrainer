@@ -1,8 +1,8 @@
-# Drainer Test Bench
+# Sniff Test: Security & Privacy Checker
 
-Check whether a website tries to drain crypto wallets before you connect a real one.
+Run a sniff test on any website before you trust it: does it try to drain your crypto wallet, run malicious code or track you?
 
-Drainer Test Bench loads a live site into a sandbox, gives it a fake "honeypot" wallet that holds no real keys, plays the victim by clicking Connect, Claim and Confirm, and reports what the site tried to do:
+Sniff Test loads a live site into a sandbox, gives it a fake "honeypot" wallet that holds no real keys, plays the victim by clicking Connect, Claim and Confirm, and reports what the site tried to do:
 
 - **Fake wallet pop-ups**: wallet confirmation boxes drawn inside the page (real wallet prompts always open in their own window), fake browser windows, and recovery-phrase forms.
 - **What it asked the wallet to sign**: Permit and Permit2 signatures, Seaport orders, token and NFT approvals and transfers, decoded into plain words such as "lets 0xdead… move USDT, USDC and WETH, unlimited".
@@ -14,7 +14,7 @@ Drainer Test Bench loads a live site into a sandbox, gives it a fake "honeypot" 
 
 Building blocks every DEX uses (Permit2, unlimited approvals to Permit2, Uniswap routers) are listed for context and do not count against a site.
 
-![Drainer Test Bench flagging a mock drainer site](docs/screenshot.png)
+![Sniff Test flagging a mock drainer site](docs/screenshot.png)
 
 ## Quick start
 

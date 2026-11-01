@@ -10,7 +10,7 @@ Drainer Test Bench loads a live site into a sandbox, gives it a fake "honeypot" 
 - **Where it tried to send data**, including whether it leaked the wallet address to another domain.
 - **Malicious JavaScript** (own score): packed or JSFuck-encoded code, runtime-downloaded code, cryptominers, clipboard hijackers that swap a copied wallet address, keyloggers and card skimmers, hidden iframes, Discord webhooks, bare-IP connections and script hosts from known supply-chain attacks such as polyfill.io.
 - **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted.
-- **The site address**: MetaMask's phishing blocklist, look-alike domains of about 25 popular projects, lure words and throwaway hosting.
+- **The site address**: MetaMask's phishing blocklist, ScamSniffer's scam-domain list (also checked against every domain the page contacts), look-alike domains of about 25 popular projects, lure words and throwaway hosting.
 
 Building blocks every DEX uses (Permit2, unlimited approvals to Permit2, Uniswap routers) are listed for context and do not count against a site.
 
@@ -66,7 +66,8 @@ Options:
 - The site runs at a local test address, so sites that check their own address or block unknown visitors may behave differently.
 - Drainers also abuse your real wallet's genuine prompts. Always read the request in your wallet's own window before signing.
 - The malicious-code and privacy scores are heuristics from one page load. Pages behave differently after consent banners, logins and scrolling, and a low risk or high privacy score is not a guarantee. Cookies and background requests are visible only through the local helper.
-- The tracker list is a short built-in one. It does not cover every tracker.
+- Trackers are matched against a short built-in list plus EasyPrivacy's domain and path rules. Rules that depend on wildcards, regexes or the page being visited are skipped, so some trackers go unseen.
+- Each test downloads the MetaMask, ScamSniffer and EasyPrivacy lists (about 11 MB, cached in the browser for a day), so GitHub and easylist.to see your IP address. Nothing from the tested site is sent to them.
 - Contract names (Permit2, Uniswap routers) and token names are recognized on Ethereum mainnet addresses.
 
 ## Project layout

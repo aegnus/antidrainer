@@ -814,8 +814,14 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         const amount = txt.match(AMOUNT);
         if (identity && action) report('prompt', { kind: 'prompt', snippet, amount: amount ? amount[0] : null });
         if (/(chrome|moz)-extension:\/\//i.test(txt)) report('bitb', { kind: 'bitb', snippet });
-        const inputs = el.querySelectorAll('input:not([type="hidden"]), textarea').length;
-        if (inputs >= 12 || (SEED.test(txt) && inputs > 0)) report('seed', { kind: 'seed', snippet });
+        // Only fields a victim could type into count: radios, checkboxes, buttons and hidden or collapsed fields (survey
+        // widgets and feedback forms carry many) do not. A recovery-phrase grid is 12+ short fields with almost no text.
+        const typed = [...el.querySelectorAll('input, textarea')].filter(i => {
+          if (/^(hidden|radio|checkbox|submit|button|reset|image|file|range|color|search)$/i.test(i.type)) return false;
+          const ic = getComputedStyle(i), ir = i.getBoundingClientRect();
+          return ic.display !== 'none' && ic.visibility !== 'hidden' && ir.width > 8 && ir.height > 8;
+        }).length;
+        if ((typed >= 12 && txt.length < 400) || (SEED.test(txt) && typed > 0)) report('seed', { kind: 'seed', snippet });
         const qr = [...el.querySelectorAll('canvas, svg, img')].some(q => { const b = q.getBoundingClientRect(); return b.width >= 140 && Math.abs(b.width - b.height) < 8; });
         if (/wallet ?connect/i.test(txt) && /scan (this |the |with )?|qr code/i.test(txt) && qr && !hasOfficialWc) report('wc', { kind: 'wc', snippet });
       }

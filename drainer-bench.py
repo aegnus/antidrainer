@@ -317,7 +317,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 
 <header class="nav">
   <div class="nav-in">
-    <div class="brand"><span class="brand-mark"><svg class="ico"><use href="#i-shield"/></svg></span><span>Sniff Test</span></div>
+    <div class="brand"><span class="brand-mark"><svg class="ico"><use href="#i-shield"/></svg></span><span>Sniff Test: Security &amp; Privacy Checker</span></div>
     <div class="nav-spacer"></div>
     <span class="pill" id="mode" data-on="0">Helper offline</span>
     <button type="button" class="icon-btn" id="open-settings" aria-label="Fetch settings and limits" title="Settings"><svg class="ico"><use href="#i-sliders"/></svg></button>

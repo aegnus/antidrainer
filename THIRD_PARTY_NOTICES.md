@@ -91,4 +91,5 @@ SOFTWARE.
 - ScamSniffer scam-database domain and address lists (GPL-3.0), downloaded when a test runs and cached in the browser: https://github.com/scamsniffer/scam-database
 - RDAP domain registration data via rdap.org, looked up per test and not stored: https://about.rdap.org/
 - EasyPrivacy tracking-protection list, downloaded when a test runs and cached in the browser. See its licence: https://easylist.to/pages/licence.html
+- APT29 watering-hole indicators in `src/bench.html` come from Sekoia's public report, October 2026: https://www.sekoia.com/blog/poisoned-source-apt29-watering-holes-targets-mobile-devices-with-n-day-exploits
 - StepDrainer indicator domains in `src/bench.html` come from public threat reports (AlienVault OTX, published April 2026, TLP:WHITE).

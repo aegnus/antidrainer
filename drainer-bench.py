@@ -576,6 +576,13 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   ];
   // Hosts reported as serving malicious scripts through supply-chain compromises (polyfill.io, June 2024 onwards).
   const BAD_JS_HOSTS = /(^|\.)(polyfill\.io|bootcss\.com|bootcdn\.net|staticfile\.net|staticfile\.org|unionadjs\.com|xhsbpza\.com|union\.macoms\.la|newcrbpc\.com)$/i;
+  // Infrastructure and indicators from the APT29 watering-hole campaign against iOS and Android visitors
+  // (Sekoia, October 2026). The loader sits on compromised sites and fetches a device-fingerprinting script.
+  const APT29_HOSTS = /(^|\.)(flux-telemetry\.com|clouds-stacks\.com|starx-net\.com|ads-it-assets\.com|adv-static\.com|wpvortex-mod\.com|assets-int\.com|adsprism-stat\.com|america250\.holiday|theowo\.club)$/i;
+  const APT29_IPS = new Set(['109.104.106.107', '95.133.231.28', '195.58.140.105', '192.121.46.25', '188.190.17.232']);
+  const APT29_HASHES = new Set(['a7d2493df00565c21587b0cad2a9fe7ca1e5590acf796da6e499be0ffde44cc3', 'bee3e014e3df87ddce0250b0985b87f6868a427a7b650a74b7ffedb9d57f3088', 'c170fda024183645c0aa681149304e50506509c3498bb6b9a5f5ced6aa73e5fa', '2ffb35e3f9e55286a930fb887e73764a913166648135fe0ca7551736d97d7bfa', '69b6cb327a4d5da99399718f6a66f84de69f89425b0a31f2dcee0682f811596f', '35c0cd19a7334b544c193e392bcd9a8f1d1f43cf6b61be5bf1d9e35537aff2ef', '621112712ec515e8791129c62feda8fff6654a0116882401609503cacc08054a', '29d283ebd08d0cd3b2e6f4a67718d3d6e7a6be01d0613d716bce218dba57a928', '41e6fd33a30d36dabff9ea408d9766a6583edcc107968f6dc1499f2586381967', '06c17b31d36838f3d29044784aa047d5c2d9174d3356c1211cf25f9df677445f', '183d62d682aea8018491c8559544e8d6a9ab0e1abd05ecbb6c97daa4f438d2b8', '387a7fb768db1350a9788d9704e7a72abe07152734e0ff026af72b417e36268c']);
+  const APT29_TITLE = 'Infrastructure from the APT29 mobile watering-hole campaign';
+  const APT29_DETAIL = 'These domains deliver a device-fingerprinting script and iOS and Android exploit chains (Sekoia, October 2026). Visiting from a phone is the danger.';
   const SLD2 = /^(co|com|org|net|gov|ac|edu)$/;
   const baseDomain = h => { const p = String(h || '').toLowerCase().split('.'); return p.length > 2 && SLD2.test(p[p.length - 2]) && p[p.length - 1].length === 2 ? p.slice(-3).join('.') : p.slice(-2).join('.'); };
   const isIp = h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
@@ -973,6 +980,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 
   /* ---------- Malicious JavaScript rules (scored separately from drainer behaviour) ---------- */
   const JS_RULES = [
+    { re: /(flux-telemetry\.com|clouds-stacks\.com|starx-net\.com|ads-it-assets\.com|adv-static\.com|wpvortex-mod\.com|assets-int\.com|adsprism-stat\.com)/i, sev: 'crit', title: APT29_TITLE, detail: APT29_DETAIL },
+    { re: /5b4c8fea5cbcee273e8d830f52-temfp\.js|VDGH_TOKEN_REF|:8881\/telemetry\/v12|collectAndDisplayFingerprint|UltimateFingerprinter/, sev: 'crit', title: 'Code from the APT29 fingerprinting script', detail: 'This file name, cookie or function name belongs to the script that picks an exploit chain for each phone (Sekoia, October 2026).' },
     { re: /eval\(function\(p,a,c,k,e,[dr]\)/, sev: 'high', title: 'Packed script (Dean Edwards packer)', detail: 'Packers hide code from review. Real apps ship plain minified bundles instead.' },
     { re: /(\[\]|\(!\[\]\+\[\]\)|!\+\[\]|!!\[\]|\+\[\]){24,}/, sev: 'high', title: 'JSFuck-encoded script', detail: 'Code written with only brackets, plus signs and bangs exists to evade scanners.' },
     { re: /(\\x[0-9a-f]{2}){12,}/gi, min: 5, sev: 'med', title: 'Dense hex-escaped strings', detail: 'Long runs of \\x escapes are used to hide URLs and function names.' },
@@ -1003,6 +1012,16 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       if (m) add('js', r.sev, r.title, r.detail, where + excerpt(src, m.index, Math.min(m[0].length, 160)));
     }
     for (const r of PRIV_CODE) if (r.re.test(src) && !P.code.has(r.name)) P.code.set(r.name, { cat: r.cat, file: file || '' });
+    // A fingerprint library with collectors for iOS, macOS and Safari features is built to pick exploits per device.
+    const kit = new Set(src.match(/\b(iosFeatures|macFeatures|safariExtensions|touchGestures|deviceUUID|only_cookies)\b/g) || []);
+    if (kit.size >= 3) add('js', 'high', 'Fingerprinting kit with iOS and Safari collectors', 'Names like ' + [...kit].join(', ') + ' match the script used to choose phone exploits in the APT29 campaign. Ordinary analytics do not collect these.', where + [...kit].join(', '));
+  }
+  async function sha256(text) {
+    try { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (_) { return ''; }
+  }
+  async function hashScan(text, file) {
+    const h = await sha256(text);
+    if (h && APT29_HASHES.has(h)) add('js', 'crit', 'File matches a published APT29 exploit payload', file + ' has the SHA-256 ' + h + ', listed in Sekoia\'s report.', h, 'Do not open this site on a phone.');
   }
 
   /* ---------- Wallet request analysis ---------- */
@@ -1114,6 +1133,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (isIp(host) && host !== '127.0.0.1' && !isIp(pageHost())) add('js', 'med', 'Sends requests to a bare IP address', kind + ' to ' + host + '. Real services use domain names; command-and-control and mining traffic often uses raw addresses.', url);
     if (/moonscan\.live|scanclaw\.live|aodefevrgdkhqltdnwgzbyjoywrlbntbhfwq|aahdjjsivunugynqjvyfbhqnjekniyfboma/i.test(url)) return add('net', 'crit', 'Contacts known StepDrainer infrastructure', kind + ' to ' + host, url);
     if (/api\.telegram\.org/i.test(url)) return add('net', 'high', 'Reports to a Telegram bot', kind + ' to ' + host, url);
+    if (/-temfp\.js\b|:8881\/telemetry\/v12\b/i.test(url)) return add('net', 'crit', 'Calls the APT29 fingerprinting or exfiltration endpoint', kind + ' to ' + host, url);
     const leaks = /0x7e57000000000000000000000000000000000001/i.test(url) ? ', sending along the wallet address' : '';
     if (/\/[A-Za-z0-9_]{6,10}-\.php\b/.test(url)) return add('net', 'high', 'Calls a drainer-style logging endpoint', kind + ' to ' + host + leaks, url);
     if (/0x7e57000000000000000000000000000000000001/i.test(url)) {
@@ -1137,6 +1157,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   const hostOf = u => { try { return new URL(u, currentUrl).hostname.toLowerCase(); } catch (_) { return ''; } };
   function noteHost(host, url, how) {
     if (!host) return;
+    if (APT29_HOSTS.test(host) || APT29_IPS.has(host)) add('js', 'crit', APT29_TITLE, APT29_DETAIL, how + ': ' + url, 'Do not open this site on a phone. If you did, update iOS or Chrome and treat saved logins as exposed.');
+    if (/(^|\.)plerdy\.com$/i.test(host)) add('js', 'info', 'Loads the Plerdy tracker', 'Plerdy\'s script was tampered with from 27 August to 3 September 2026 and used to spread the APT29 phone exploits. It is a normal tracker otherwise.', how + ': ' + url);
     if (BAD_JS_HOSTS.test(host)) add('js', 'high', 'Script host linked to a supply-chain attack', host + ' was reported serving malicious code to sites that embedded it (polyfill.io compromise, 2024).', how + ': ' + url);
     if (baseDomain(host) === baseDomain(pageHost())) return;
     const bad = scamHit(host);
@@ -1150,6 +1172,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     const eq = parts[0].indexOf('=');
     const name = eq < 0 ? parts[0] : parts[0].slice(0, eq);
     if (!name) return;
+    if (name === 'VDGH_TOKEN_REF') add('js', 'crit', 'Sets the cookie used by the APT29 exploit chains', 'VDGH_TOKEN_REF marks a visitor the exploit kit has already attacked (Sekoia, October 2026).', raw);
     const c = { name, host: reqHost, secure: false, httpOnly: false, sameSite: '', days: null, by: by || '' };
     for (const a of parts.slice(1)) {
       const [k, ...v] = a.split('='); const key = k.toLowerCase(), val = v.join('=');
@@ -1660,6 +1683,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       else if (suffixes.some(s => list.black.has(s))) add('site', 'crit', 'On the MetaMask phishing blocklist', 'This domain is listed as a confirmed crypto phishing site.', host);
       else add('site', 'info', 'Not on the MetaMask phishing blocklist', list.black.size.toLocaleString() + ' listed domains checked. New drainer sites appear daily, so this proves little.', host);
     } catch (e) { add('site', 'info', 'Could not check the phishing blocklist', 'The list could not be downloaded: ' + e.message, ''); }
+    if (APT29_HOSTS.test(host)) add('site', 'crit', APT29_TITLE, host + ' is a lookalike or delivery domain from the campaign.', host);
     await loadFeeds();
     const bad = scamHit(host);
     if (bad) add('site', 'crit', 'On the ScamSniffer scam list', bad + ' is listed in ScamSniffer\'s database of crypto scam domains.', host);
@@ -1703,8 +1727,44 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     try {
       const { text } = await fetchVia(abs);
       if (myRun !== run) return;
-      if (text.length < 4e6) { if (srcCache.size < 60) srcCache.set(abs, text); staticScan(text, abs.split('/').pop().split('?')[0].slice(0, 60) || abs); }
+      if (text.length < 4e6) { hashScan(text, abs); if (srcCache.size < 60) srcCache.set(abs, text); staticScan(text, abs.split('/').pop().split('?')[0].slice(0, 60) || abs); }
     } catch (_) { if (myRun === run) add('src', 'info', 'Could not download a script file', 'This file was not scanned.', abs); }
+  }
+
+  /* ---------- Phone check: does the page send different code to phones? ---------- */
+  // Some campaigns serve their payload only to iOS or Android visitors. The pages are fetched and read, never run.
+  const PHONES = [['ios16', 'iPhone (iOS 16.7)'], ['ios18', 'iPhone (iOS 18.5)'], ['android', 'Android (Chrome 140)']];
+  function codeRefs(html, base) {
+    const out = new Map();
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      doc.querySelectorAll('script[src], iframe[src], link[rel="modulepreload"][href]').forEach(el => {
+        try { const a = new URL(el.getAttribute('src') || el.getAttribute('href'), base); if (/^https?:$/.test(a.protocol)) out.set(a.hostname + a.pathname, a.href); } catch (_) {}
+      });
+    } catch (_) {}
+    return out;
+  }
+  async function phoneCheck(u, desktopHtml, myRun) {
+    const desktop = codeRefs(desktopHtml, u.href), diffs = [], tried = [];
+    for (const [id, label] of PHONES) {
+      let res;
+      try { res = await getText('/fetch?url=' + encodeURIComponent(u.href) + '&ua=' + id, 25000, { 'X-Bench-Token': HELPER.token }); } catch (_) { continue; }
+      if (myRun !== run) return;
+      tried.push(label);
+      const fresh = [...codeRefs(res.text, u.href)].filter(([k]) => !desktop.has(k));
+      if (res.text !== desktopHtml) staticScan(res.text, 'page HTML as ' + label);
+      for (const [, href] of fresh.slice(0, 6)) {
+        diffs.push(label + ': ' + href);
+        try {
+          const f = await getText('/fetch?url=' + encodeURIComponent(href) + '&ua=' + id, 25000, { 'X-Bench-Token': HELPER.token });
+          if (myRun !== run) return;
+          if (f.text.length < 4e6) { hashScan(f.text, href); staticScan(f.text, href.split('/').pop().split('?')[0].slice(0, 40) + ' as ' + label); }
+        } catch (_) {}
+      }
+    }
+    if (myRun !== run || !tried.length) return;
+    if (diffs.length) add('js', 'high', 'Serves different scripts to phone visitors', 'These scripts or frames appeared only when the page was requested as a phone. Some attack kits show their code to iOS and Android visitors only, as in the APT29 campaign (Sekoia, October 2026).', diffs.join('\n'), 'Do not open this site on a phone until you know why it does this.');
+    else add('js', 'info', 'Same scripts for desktop and phones', 'Requested as ' + tried.join(', ') + ' and compared with the desktop page. Kits can also check touch support or screen size in their own code, so this does not rule out phone-only attacks.', '');
   }
 
   /* ---------- Run ---------- */
@@ -1765,6 +1825,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       .then(r => { if (myRun === run && JSON.parse(r.text).gpc === true) { P.gpcFile = true; render(); } }).catch(() => {});
     staticScan(page.text, 'page HTML');
     scanMarkup(page.text, u);
+    if (HELPER) phoneCheck(u, page.text, myRun).catch(() => {});
     try {
       const doc = new DOMParser().parseFromString(page.text, 'text/html');
       doc.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(el => scanScript(el.getAttribute('src') || el.getAttribute('href'), myRun));
@@ -1910,6 +1971,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 </script>
 '''
 
+# Visitor profiles for the bench's phone check: some attack kits serve code only to phones.
+PROFILES = {
+    "ios16": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "ios18": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+    "android": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+}
 MAX_BYTES = 25 * 1024 * 1024
 MAX_LOG = 1500
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -2030,13 +2097,13 @@ def origin_of(url):
     return u.scheme + "://" + u.netloc if u.scheme in ("http", "https") and u.netloc else None
 
 
-def upstream(url, method="GET", body=None, page_headers=None, page_url=None, accept=None):
+def upstream(url, method="GET", body=None, page_headers=None, page_url=None, accept=None, ua=None):
     """Fetch url; returns (status, headers, bytes, final_url).
 
     page_headers: headers the tested page set on the request; page_url: the tested site's real address,
     used as Origin and Referer so its servers see the request as coming from the site itself."""
     check_target(url)
-    headers = {"User-Agent": UA, "Accept": accept or "*/*", "Accept-Language": "en-US,en;q=0.9"}
+    headers = {"User-Agent": ua or UA, "Accept": accept or "*/*", "Accept-Language": "en-US,en;q=0.9"}
     for k, v in (page_headers or {}).items():
         if k.lower() not in DROP_REQ and not k.lower().startswith(("x-bench", "sec-")):
             headers[k] = v
@@ -2128,7 +2195,7 @@ class BenchHandler(Base):
             q = urllib.parse.parse_qs(parsed.query)
             target = q.get("url", [""])[0]
             try:
-                status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8")
+                status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8", ua=PROFILES.get(q.get("ua", [""])[0]))
             except Exception as e:
                 return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
             if "top" in q:  # the page being tested: start a fresh log

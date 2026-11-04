@@ -41,6 +41,12 @@ import webbrowser
 
 BENCH_HTML = r'''@@BENCH_HTML@@'''
 
+# Visitor profiles for the bench's phone check: some attack kits serve code only to phones.
+PROFILES = {
+    "ios16": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "ios18": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+    "android": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+}
 MAX_BYTES = 25 * 1024 * 1024
 MAX_LOG = 1500
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -161,13 +167,13 @@ def origin_of(url):
     return u.scheme + "://" + u.netloc if u.scheme in ("http", "https") and u.netloc else None
 
 
-def upstream(url, method="GET", body=None, page_headers=None, page_url=None, accept=None):
+def upstream(url, method="GET", body=None, page_headers=None, page_url=None, accept=None, ua=None):
     """Fetch url; returns (status, headers, bytes, final_url).
 
     page_headers: headers the tested page set on the request; page_url: the tested site's real address,
     used as Origin and Referer so its servers see the request as coming from the site itself."""
     check_target(url)
-    headers = {"User-Agent": UA, "Accept": accept or "*/*", "Accept-Language": "en-US,en;q=0.9"}
+    headers = {"User-Agent": ua or UA, "Accept": accept or "*/*", "Accept-Language": "en-US,en;q=0.9"}
     for k, v in (page_headers or {}).items():
         if k.lower() not in DROP_REQ and not k.lower().startswith(("x-bench", "sec-")):
             headers[k] = v
@@ -259,7 +265,7 @@ class BenchHandler(Base):
             q = urllib.parse.parse_qs(parsed.query)
             target = q.get("url", [""])[0]
             try:
-                status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8")
+                status, headers, data, final = upstream(target, accept="text/html,application/javascript,*/*;q=0.8", ua=PROFILES.get(q.get("ua", [""])[0]))
             except Exception as e:
                 return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
             if "top" in q:  # the page being tested: start a fresh log

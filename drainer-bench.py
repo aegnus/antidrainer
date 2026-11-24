@@ -789,7 +789,20 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const wrapCtor = (name, api) => {
         const Orig = window[name];
         if (!Orig) return;
-        const W = function () { guard(() => { const by = callerOf(); probe(api, by, { api, by }); }); return Reflect.construct(Orig, arguments, new.target || W); };
+        const W = function () {
+          guard(() => { const by = callerOf(); probe(api, by, { api, by }); });
+          let args = arguments;
+          if (name === 'Worker') guard(() => {
+            // The page runs on the bench's own address but names its scripts on the real site, and browsers refuse
+            // cross-origin workers. Start the worker from a same-origin loader that pulls the real script in.
+            const abs = new URL(String(args[0]), document.baseURI);
+            if (abs.origin === location.origin || !/^https?:$/.test(abs.protocol)) return;
+            const mod = args[1] && args[1].type === 'module';
+            const code = mod ? 'import ' + JSON.stringify(abs.href) + ';' : 'importScripts(' + JSON.stringify(abs.href) + ');';
+            args = [URL.createObjectURL(new Blob([code], { type: 'text/javascript' })), args[1]];
+          });
+          return Reflect.construct(Orig, args, new.target || W);
+        };
         W.prototype = Orig.prototype;
         window[name] = W;
       };

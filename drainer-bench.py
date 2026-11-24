@@ -29,6 +29,7 @@ Needs only Python 3.8+, no extra packages.
 import argparse
 import collections
 import hashlib
+import io
 import math
 import os
 import struct
@@ -383,7 +384,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         </label>
         <label class="cell" for="scandl">
           <span class="cell-ico"><svg class="ico"><use href="#i-download"/></svg></span>
-          <span class="cell-body"><span class="cell-title">Check downloads</span><span class="cell-sub" style="display:block">Downloads linked installers (up to 5, 250 MB each) and reads them without running them. Needs the helper</span></span>
+          <span class="cell-body"><span class="cell-title">Check downloads</span><span class="cell-sub" style="display:block">Clicks Download and Generate buttons, then reads linked or page-built files (up to 5, 250 MB each) without running them. Needs the helper</span></span>
           <input type="checkbox" role="switch" class="switch" id="scandl">
         </label>
         <div class="cell">
@@ -816,14 +817,31 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       for (const p of ['colorDepth', 'pixelDepth', 'availWidth', 'availHeight']) watch(window.Screen && Screen.prototype, p);
     });
     // Downloads started by script: a click on a link that downloads a program, with no click from the visitor.
+    // Files the page builds in the browser (Blob and data: links behind a Download button) are read and sent to the bench.
+    const dlNote = { own: false, grabbed: new Set(), blobs: new Map() };
     guard(() => {
       const DL = /\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)(\?|#|$)/i;
+      if (cfg.dlClick && window.URL && URL.createObjectURL) {
+        const oc = URL.createObjectURL;
+        URL.createObjectURL = function (b) { const u = oc.apply(this, arguments); guard(() => { if (b instanceof Blob) dlNote.blobs.set(u, b); }); return u; };
+      }
+      window.__dtbGrab = (a, how) => guard(() => {
+        const href = String(a.href || ''); if (!/^(blob|data):/i.test(href) || dlNote.grabbed.has(href)) return;
+        dlNote.grabbed.add(href);
+        const name = (a.getAttribute('download') || 'download').slice(0, 120);
+        const blob = dlNote.blobs.get(href);
+        (blob ? Promise.resolve(blob) : fetch(href).then(r => r.blob())).then(b => {
+          if (b.size > 25 * 1048576) return post('dlfile', { name, size: b.size, how, tooBig: true });
+          return b.arrayBuffer().then(buf => post('dlfile', { name, size: b.size, type: b.type, how, buf }));
+        }).catch(() => {});
+      });
       const oc = HTMLAnchorElement.prototype.click;
       HTMLAnchorElement.prototype.click = function () {
         guard(() => {
           if (this.hasAttribute('download') || DL.test(this.href || '')) {
             const active = !!(navigator.userActivation && navigator.userActivation.isActive);
-            probe('autodl', this.href + active, { api: 'autodl', url: String(this.href).slice(0, 400), active });
+            if (!dlNote.own) probe('autodl', this.href + active, { api: 'autodl', url: /^(blob|data):/i.test(this.href) ? 'a file the page built itself (' + (this.getAttribute('download') || 'download') + ')' : String(this.href).slice(0, 400), active });
+            if (cfg.dlClick) window.__dtbGrab(this, active || dlNote.own ? 'click' : 'script');
           }
         });
         return oc.apply(this, arguments);
@@ -965,6 +983,41 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         setTimeout(step, 900);
       };
       const start = () => setTimeout(step, 700);
+      if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
+    }
+    // Download hunt: click the buttons that make or fetch a file, then collect what appeared.
+    if (cfg.dlClick) {
+      const WORDS = /(download|generate|create file|get (the |your )?(app|file|installer|setup|software)|install|export|save as)/i;
+      const done = new Set();
+      let n = 0;
+      const sweep = () => {
+        document.querySelectorAll('a[download], a[href^="blob:"], a[href^="data:"]').forEach(a => guard(() => {
+          if (/^(blob|data):/i.test(a.href)) window.__dtbGrab(a, 'page');
+          else if (a.hasAttribute('download') && /^https?:/i.test(a.href) && !done.has(a.href)) { done.add(a.href); post('dllink', { url: a.href }); }
+        }));
+        document.querySelectorAll('a[href]').forEach(a => guard(() => {
+          if (/\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)(\?|#|$)/i.test(a.href) && !done.has(a.href)) { done.add(a.href); post('dllink', { url: a.href }); }
+        }));
+      };
+      const hunt = () => {
+        sweep();
+        if (n >= 6 || !document.body) return post('dlhunt', { done: true, clicks: n });
+        const el = collect(document.body, []).find(e => {
+          if (done.has(e) || !e.matches('button, [role="button"], input[type="button"], input[type="submit"]')) return false;
+          const label = (e.innerText || e.value || '').trim();
+          if (!label || label.length > 40 || !WORDS.test(label) || e.disabled) return false;
+          const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+          return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+        });
+        if (!el) return post('dlhunt', { done: true, clicks: n });
+        done.add(el); n++;
+        post('dlhunt', { label: (el.innerText || el.value || '').trim().slice(0, 40) });
+        dlNote.own = true;
+        try { el.click(); } catch (_) {}
+        setTimeout(() => { dlNote.own = false; }, 50);
+        setTimeout(hunt, 1600);
+      };
+      const start = () => setTimeout(hunt, 1200);
       if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
     }
     window.addEventListener('load', () => setTimeout(() => post('loaded', {}), 50));
@@ -1549,7 +1602,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   }
 
   function buildDoc(src, opts) {
-    const cfg = JSON.stringify({ run: opts.run, me: ME, autoClick: opts.autoClick, wsRelay: !!opts.wsRelay, site: opts.site || '' });
+    const cfg = JSON.stringify({ run: opts.run, me: ME, autoClick: opts.autoClick, dlClick: !!opts.dlClick, wsRelay: !!opts.wsRelay, site: opts.site || '' });
     const head = ['<meta name="referrer" content="no-referrer">'];
     head.push('<script>(' + harness.toString() + ')(' + cfg + ');<\/script>');
     if (opts.base) head.push('<base href="' + opts.base.replace(/"/g, '&quot;') + '">');
@@ -1786,6 +1839,31 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     try { r = JSON.parse((await getText('/scan-file?url=' + encodeURIComponent(url), 170000, { 'X-Bench-Token': HELPER.token })).text); }
     catch (e) { if (myRun === run) add('dl', 'info', 'Could not check ' + name, e.message, url); return; }
     if (myRun !== run) return;
+    reportDownload(r, url, name, why);
+  }
+  // A file the page built in the browser behind a button: sent to the helper as bytes, then judged like any download.
+  function scanBuiltFile(d) {
+    const key = 'built:' + d.name + ':' + d.size;
+    if (dlSeen.has(key) || dlSeen.size >= DL_MAX_FILES) return;
+    dlSeen.add(key);
+    const why = d.how === 'script' ? 'built by a script and handed to the visitor' : 'built by the page after a button was clicked';
+    add('dl', 'info', 'Page builds a file for download: ' + d.name, fmtSize(d.size) + ' created inside the page (' + why + '), not fetched from a server.', d.name);
+    if (d.tooBig) return add('dl', 'info', 'File too large to check: ' + d.name, 'Files built in the page are only read up to 25 MB.', d.name);
+    if (!HELPER) return;
+    const myRun = run;
+    dlQueue = dlQueue.then(async () => {
+      status.textContent = 'Checking built file ' + d.name + '…';
+      let r;
+      try {
+        const res = await fetch('/scan-file?name=' + encodeURIComponent(d.name) + '&type=' + encodeURIComponent(d.type || ''), { method: 'POST', headers: { 'X-Bench-Token': HELPER.token }, body: d.buf });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text);
+        r = JSON.parse(text);
+      } catch (e) { if (myRun === run) add('dl', 'info', 'Could not check ' + d.name, e.message, d.name); return; }
+      if (myRun === run) reportDownload(r, d.name, d.name, why);
+    }).catch(() => {});
+  }
+  function reportDownload(r, url, name, why) {
     const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
     const facts = [r.kind, fmtSize(r.size), 'entropy ' + r.entropy, r.machine, r.signed === true ? 'signed' : r.signed === false ? 'unsigned' : '', r.dotnet ? '.NET' : ''].filter(Boolean).join(' · ');
     add('dl', 'info', 'Checked ' + name, facts + '. Found as: ' + why + '.', url + '\nSHA-256 ' + r.sha256, 'Search the SHA-256 on VirusTotal to see what other engines say.');
@@ -1924,7 +2002,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       const doc = new DOMParser().parseFromString(page.text, 'text/html');
       doc.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(el => scanScript(el.getAttribute('src') || el.getAttribute('href'), myRun));
     } catch (_) {}
-    const html = buildDoc(page.text, { run: myRun, autoClick: document.getElementById('autoclick').checked, base: u.href, site: u.hostname, wsRelay: !!(HELPER && HELPER.specimen) });
+    const html = buildDoc(page.text, { run: myRun, autoClick: document.getElementById('autoclick').checked, dlClick: document.getElementById('scandl').checked, base: u.href, site: u.hostname, wsRelay: !!(HELPER && HELPER.specimen) });
     if (HELPER && HELPER.specimen) {
       try {
         const r = await fetch('/stage', { method: 'POST', headers: { 'X-Bench-Token': HELPER.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ html, url: u.href }) });
@@ -1967,6 +2045,9 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     else if (msg.type === 'ui') analyzeUi(msg.data);
     else if (msg.type === 'probe') analyzeProbe(msg.data);
     else if (msg.type === 'loaded') status.textContent = status.textContent.replace(/ · running in sandbox$/, '') + ' · page running';
+    else if (msg.type === 'dlfile') scanBuiltFile(msg.data);
+    else if (msg.type === 'dllink') queueDownload(msg.data.url, 'a download link that appeared after clicking a button');
+    else if (msg.type === 'dlhunt') status.textContent = msg.data.done ? 'Done · tried ' + msg.data.clicks + ' download button' + (msg.data.clicks === 1 ? '' : 's') : 'Clicking download button "' + msg.data.label + '"…';
     else if (msg.type === 'auto') status.textContent = msg.data.done ? 'Done · ' + msg.data.clicks + ' automatic click' + (msg.data.clicks === 1 ? '' : 's') : 'Clicking "' + msg.data.label + '"…';
   });
 
@@ -2327,12 +2408,37 @@ def parse_zip(tail, size):
     return out
 
 
-def inspect_download(url):
-    """Download url into memory only (never to disk), hash it and read its headers. Nothing is run or opened."""
-    check_target(url)
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+class MemoryResponse:
+    """A file the page built in the browser, handed over as bytes, shaped like an HTTP response."""
+    status = 200
+
+    def __init__(self, data, name, ctype):
+        self.data, self.name, self.headers = io.BytesIO(data), name, {"Content-Type": ctype or "", "Content-Length": str(len(data))}
+
+    def read(self, n):
+        return self.data.read(n)
+
+    def geturl(self):
+        return "generated in the page: " + self.name
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def inspect_download(url, data=None, ctype=""):
+    """Read a file into memory only (never to disk), hash it and read its headers. Nothing is run or opened.
+    The file comes from url, or from data when the page built it in the browser."""
+    if data is None:
+        check_target(url)
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+        opened = OPENER.open(req, timeout=25)
+    else:
+        opened = MemoryResponse(data, url, ctype)
     started = time.time()
-    with OPENER.open(req, timeout=25) as resp:
+    with opened as resp:
         if resp.status >= 400:
             raise ValueError("The site answered with HTTP %d." % resp.status)
         length = int(resp.headers.get("Content-Length") or 0)
@@ -2508,10 +2614,20 @@ class BenchHandler(Base):
         return self.send_body(404, "Not found")
 
     def do_POST(self):
-        if urllib.parse.urlsplit(self.path).path != "/stage":
+        route = urllib.parse.urlsplit(self.path)
+        if route.path not in ("/stage", "/scan-file"):
             return self.send_body(404, "Not found")
         if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
             return self.send_body(403, "Refused.")
+        if route.path == "/scan-file":
+            # A file the page built in the browser (for example a Blob behind a Download button), sent as raw bytes.
+            q = urllib.parse.parse_qs(route.query)
+            try:
+                data = self.read_body(DL_MAX)
+                return self.send_body(200, json.dumps(inspect_download(q.get("name", ["file"])[0][:120], data, q.get("type", [""])[0][:100])),
+                                      "application/json", {"Cache-Control": "no-store"})
+            except Exception as e:
+                return self.send_body(413 if isinstance(e, OverflowError) else 502, friendly_error(e))
         try:
             payload = json.loads(self.read_body(30 * 1024 * 1024).decode("utf-8"))
             with STATE_LOCK:

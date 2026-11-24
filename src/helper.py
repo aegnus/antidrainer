@@ -28,6 +28,7 @@ Needs only Python 3.8+, no extra packages.
 import argparse
 import collections
 import hashlib
+import io
 import math
 import os
 import struct
@@ -309,12 +310,37 @@ def parse_zip(tail, size):
     return out
 
 
-def inspect_download(url):
-    """Download url into memory only (never to disk), hash it and read its headers. Nothing is run or opened."""
-    check_target(url)
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+class MemoryResponse:
+    """A file the page built in the browser, handed over as bytes, shaped like an HTTP response."""
+    status = 200
+
+    def __init__(self, data, name, ctype):
+        self.data, self.name, self.headers = io.BytesIO(data), name, {"Content-Type": ctype or "", "Content-Length": str(len(data))}
+
+    def read(self, n):
+        return self.data.read(n)
+
+    def geturl(self):
+        return "generated in the page: " + self.name
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def inspect_download(url, data=None, ctype=""):
+    """Read a file into memory only (never to disk), hash it and read its headers. Nothing is run or opened.
+    The file comes from url, or from data when the page built it in the browser."""
+    if data is None:
+        check_target(url)
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+        opened = OPENER.open(req, timeout=25)
+    else:
+        opened = MemoryResponse(data, url, ctype)
     started = time.time()
-    with OPENER.open(req, timeout=25) as resp:
+    with opened as resp:
         if resp.status >= 400:
             raise ValueError("The site answered with HTTP %d." % resp.status)
         length = int(resp.headers.get("Content-Length") or 0)
@@ -490,10 +516,20 @@ class BenchHandler(Base):
         return self.send_body(404, "Not found")
 
     def do_POST(self):
-        if urllib.parse.urlsplit(self.path).path != "/stage":
+        route = urllib.parse.urlsplit(self.path)
+        if route.path not in ("/stage", "/scan-file"):
             return self.send_body(404, "Not found")
         if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
             return self.send_body(403, "Refused.")
+        if route.path == "/scan-file":
+            # A file the page built in the browser (for example a Blob behind a Download button), sent as raw bytes.
+            q = urllib.parse.parse_qs(route.query)
+            try:
+                data = self.read_body(DL_MAX)
+                return self.send_body(200, json.dumps(inspect_download(q.get("name", ["file"])[0][:120], data, q.get("type", [""])[0][:100])),
+                                      "application/json", {"Cache-Control": "no-store"})
+            except Exception as e:
+                return self.send_body(413 if isinstance(e, OverflowError) else 502, friendly_error(e))
         try:
             payload = json.loads(self.read_body(30 * 1024 * 1024).decode("utf-8"))
             with STATE_LOCK:

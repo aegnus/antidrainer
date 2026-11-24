@@ -999,9 +999,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
           if (/\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)(\?|#|$)/i.test(a.href) && !done.has(a.href)) { done.add(a.href); post('dllink', { url: a.href }); }
         }));
       };
+      // Generated files can take a few seconds: keep looking after the last click.
+      const finish = () => { post('dlhunt', { done: true, clicks: n }); setTimeout(sweep, 2000); setTimeout(sweep, 6000); };
       const hunt = () => {
         sweep();
-        if (n >= 6 || !document.body) return post('dlhunt', { done: true, clicks: n });
+        if (n >= 6 || !document.body) return finish();
         const el = collect(document.body, []).find(e => {
           if (done.has(e) || !e.matches('button, [role="button"], input[type="button"], input[type="submit"]')) return false;
           const label = (e.innerText || e.value || '').trim();
@@ -1009,7 +1011,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
           const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
           return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
         });
-        if (!el) return post('dlhunt', { done: true, clicks: n });
+        if (!el) return finish();
         done.add(el); n++;
         post('dlhunt', { label: (el.innerText || el.value || '').trim().slice(0, 40) });
         dlNote.own = true;
@@ -1017,8 +1019,10 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         setTimeout(() => { dlNote.own = false; }, 50);
         setTimeout(hunt, 1600);
       };
-      const start = () => setTimeout(hunt, 1200);
-      if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
+      // Do not wait for the load event: a slow tracker can hold it back for a long time.
+      let began = false;
+      const start = () => { if (began) return; began = true; setTimeout(hunt, 1200); };
+      if (document.readyState === 'complete') start(); else { window.addEventListener('load', start); setTimeout(start, 4000); }
     }
     window.addEventListener('load', () => setTimeout(() => post('loaded', {}), 50));
   }

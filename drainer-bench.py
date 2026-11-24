@@ -430,6 +430,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         <li>Check on a block explorer whether your address now shows delegated code (EIP-7702). If it does, move your funds to a new wallet.</li>
         <li>If your recovery phrase was entered anywhere, create a new wallet and move everything now.</li>
         <li>Report the site on <a href="https://www.chainabuse.com/" target="_blank" rel="noopener noreferrer">Chainabuse</a> to help others.</li>
+        <li>Contact <a href="https://x.com/AengusWiz" target="_blank" rel="noopener noreferrer">@AengusWiz on X</a> for help.</li>
       </ol>
     </div>
 

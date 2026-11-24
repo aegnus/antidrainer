@@ -2660,6 +2660,11 @@ class BenchHandler(Base):
                     STATE["cookies"] = []
                 record(final, status, headers, len(data))
             if status >= 400:
+                server = (headers.get("Server") or "").lower()
+                if status in (403, 429, 503) and ("cloudflare" in server or headers.get("cf-mitigated") or "akamai" in server or "sucuri" in server):
+                    return self.send_body(502, "The site answered with HTTP %d and a bot check (%s). It only lets real browsers in, "
+                                          "and this tool does not try to get past that, so this site cannot be tested here. "
+                                          "Sites behind a bot check are usually run by a company that blocks scripts on purpose." % (status, server.split("/")[0] or "protection service"))
                 return self.send_body(502, "The site answered with HTTP %d." % status)
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),

@@ -1886,6 +1886,18 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     add('dl', 'info', 'Checked ' + name, facts + '. Found as: ' + why + '.', url + '\nSHA-256 ' + r.sha256, 'Search the SHA-256 on VirusTotal to see what other engines say.');
     const evid = url + '\nSHA-256 ' + r.sha256;
     if (APT29_HASHES.has(r.sha256)) add('dl', 'crit', 'File matches a published APT29 exploit payload', name + ' has a SHA-256 listed in Sekoia\'s report.', evid, 'Do not open this file.');
+    const cc = r.circl, cy = r.cymru;
+    if (cy && cy.known) {
+      if (cy.detection >= 50) add('dl', 'crit', 'Known malware: ' + cy.detection + '% of antivirus engines flag ' + name, 'Team Cymru\'s Malware Hash Registry lists this exact file.', evid, 'Do not open this file.');
+      else add('dl', 'high', 'Listed as malware by Team Cymru (' + cy.detection + '% of engines): ' + name, 'A low percentage can be a false alarm, but a download from an unknown site deserves caution.', evid);
+    }
+    if (cc && cc.known) {
+      const what = [cc.name, cc.source].filter(Boolean).join(' · ');
+      if (cc.malicious) add('dl', 'crit', 'Known malware (CIRCL hashlookup): ' + name, 'This exact file is tagged as malicious by ' + cc.malicious + '.', evid + (what ? '\n' + what : ''), 'Do not open this file.');
+      else add('dl', 'info', 'File is in the CIRCL known-files set: ' + name, 'Its hash matches ' + (what || 'a catalogued file') + '. That means it is a known file, not that it is safe.', evid);
+    }
+    if (cy && cy.known === false && cc && cc.known === false) add('dl', 'info', 'File not in the free malware or known-file lists: ' + name, 'Team Cymru and CIRCL hashlookup have no record of it. New or rare files have none, so this proves nothing either way.', evid);
+    if ((cy && cy.error) || (cc && cc.error)) add('dl', 'info', 'A hash lookup failed', [cy && cy.error && 'Team Cymru: ' + cy.error, cc && cc.error && 'CIRCL: ' + cc.error].filter(Boolean).join('\n'), '');
     const vt = r.virustotal;
     if (vt && vt.known) {
       const n = vt.malicious + vt.suspicious, lbl = vt.label ? ' (' + vt.label + ')' : '';
@@ -1894,7 +1906,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       else add('dl', 'info', 'VirusTotal knows this file and flags nothing', vt.total + ' engines scanned it. A known clean file is a good sign.', evid);
     } else if (vt && vt.known === false) add('dl', 'info', 'File not known to VirusTotal: ' + name, 'New or rare files have no record yet. That is not proof they are safe.', evid);
     else if (vt && vt.error) add('dl', 'info', 'VirusTotal lookup failed', vt.error, '');
-    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'Reputation lookup is off', 'Start the helper with a VT_API_KEY environment variable to look up each file\'s hash on VirusTotal. Only the hash is sent.', ''); }
+    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'VirusTotal lookup is off', 'Team Cymru and CIRCL are checked for free. For more engines, start the helper with a VT_API_KEY environment variable to also look up each hash on VirusTotal. Only the hash is sent.', ''); }
     const k = r.kind || '';
     const expect = { exe: /Windows executable/, scr: /Windows executable/, msi: /installer/, dmg: /disk image|Encrypted/, zip: /ZIP/, apk: /ZIP/, jar: /ZIP/ }[ext.toLowerCase()];
     if (expect && !expect.test(k)) add('dl', 'high', name + ' is not what its name says', 'The name ends in .' + ext + ' but the content is: ' + k + '.', evid, 'Do not open it.');
@@ -2461,7 +2473,7 @@ def inspect_download(url, data=None, ctype=""):
         length = int(resp.headers.get("Content-Length") or 0)
         if length > DL_MAX:
             raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
-        sha = hashlib.sha256()
+        sha, md5, sha1 = hashlib.sha256(), hashlib.md5(), hashlib.sha1()
         head, tail, size = bytearray(), b"", 0
         total_counts = collections.Counter()
         sections, parsed, extra = [], False, {}
@@ -2475,6 +2487,8 @@ def inspect_download(url, data=None, ctype=""):
             if size + len(chunk) > DL_MAX:
                 raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
             sha.update(chunk)
+            md5.update(chunk)
+            sha1.update(chunk)
             if len(head) < DL_HEAD:
                 head += chunk[:DL_HEAD - len(head)]
             tail = (tail + chunk)[-DL_TAIL:]
@@ -2489,7 +2503,7 @@ def inspect_download(url, data=None, ctype=""):
                     sec_counts[s["name"] + str(i)].update(chunk[lo - size:hi - size])
             size += len(chunk)
     head = bytes(head)
-    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(),
+    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(), "sha1": sha1.hexdigest(), "md5": md5.hexdigest(),
             "contentType": resp.headers.get("Content-Type", ""), "disposition": resp.headers.get("Content-Disposition", ""),
             "entropy": round(entropy(total_counts, size), 2)}
     if head[:2] == b"MZ":
@@ -2519,10 +2533,47 @@ def inspect_download(url, data=None, ctype=""):
         info["kind"] = "Script"
     else:
         info["kind"] = "Unknown format"
+    if not os.environ.get("SNIFF_NO_LOOKUP"):
+        info["circl"] = circl_lookup(info["sha256"])
+        info["cymru"] = cymru_lookup(info["sha1"])
     vt = os.environ.get("VT_API_KEY")
     if vt:
         info["virustotal"] = vt_lookup(info["sha256"], vt)
     return info
+
+
+def circl_lookup(sha256):
+    """CIRCL hashlookup: free, no key. Knows files from NSRL and Linux/Android/Windows software sets and some malware
+    lists. Only the hash is sent."""
+    req = urllib.request.Request("https://hashlookup.circl.lu/lookup/sha256/" + sha256, headers={"User-Agent": UA, "Accept": "application/json"})
+    try:
+        with OPENER.open(req, timeout=15) as r:
+            d = json.loads(r.read(2_000_000))
+    except urllib.error.HTTPError as e:
+        return {"known": False} if e.code == 404 else {"error": "HTTP %d" % e.code}
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    return {"known": True, "malicious": str(d.get("KnownMalicious", ""))[:80], "name": str(d.get("FileName", ""))[:120],
+            "source": str(d.get("source", ""))[:80], "trust": d.get("hashlookup:trust")}
+
+
+def cymru_lookup(sha1):
+    """Team Cymru Malware Hash Registry: free, no key. A DNS TXT record "<time> <percent of AV engines flagging it>".
+    Python cannot query TXT records, so this goes through Cloudflare's DNS-over-HTTPS. Only the hash is sent."""
+    url = "https://cloudflare-dns.com/dns-query?type=TXT&name=" + sha1 + ".malware.hash.cymru.com"
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/dns-json"})
+    try:
+        with OPENER.open(req, timeout=15) as r:
+            d = json.loads(r.read(200_000))
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    if d.get("Status") == 3 or not d.get("Answer"):
+        return {"known": False}
+    try:
+        parts = str(d["Answer"][0]["data"]).strip('"').split()
+        return {"known": True, "detection": int(parts[1])}
+    except Exception:
+        return {"error": "unreadable answer"}
 
 
 def vt_lookup(sha256, key):

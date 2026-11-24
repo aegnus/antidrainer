@@ -93,3 +93,8 @@ SOFTWARE.
 - EasyPrivacy tracking-protection list, downloaded when a test runs and cached in the browser. See its licence: https://easylist.to/pages/licence.html
 - APT29 watering-hole indicators in `src/bench.html` come from Sekoia's public report, October 2026: https://www.sekoia.com/blog/poisoned-source-apt29-watering-holes-targets-mobile-devices-with-n-day-exploits
 - StepDrainer indicator domains in `src/bench.html` come from public threat reports (AlienVault OTX, published April 2026, TLP:WHITE).
+
+## Hash lookups (queried at runtime, nothing bundled)
+
+- **Team Cymru Malware Hash Registry** (hash.cymru.com), queried over DNS-over-HTTPS from Cloudflare (cloudflare-dns.com). Only a SHA-1 hash is sent.
+- **CIRCL hashlookup** (hashlookup.circl.lu). Only a SHA-256 hash is sent.

@@ -1837,6 +1837,18 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     add('dl', 'info', 'Checked ' + name, facts + '. Found as: ' + why + '.', url + '\nSHA-256 ' + r.sha256, 'Search the SHA-256 on VirusTotal to see what other engines say.');
     const evid = url + '\nSHA-256 ' + r.sha256;
     if (APT29_HASHES.has(r.sha256)) add('dl', 'crit', 'File matches a published APT29 exploit payload', name + ' has a SHA-256 listed in Sekoia\'s report.', evid, 'Do not open this file.');
+    const cc = r.circl, cy = r.cymru;
+    if (cy && cy.known) {
+      if (cy.detection >= 50) add('dl', 'crit', 'Known malware: ' + cy.detection + '% of antivirus engines flag ' + name, 'Team Cymru\'s Malware Hash Registry lists this exact file.', evid, 'Do not open this file.');
+      else add('dl', 'high', 'Listed as malware by Team Cymru (' + cy.detection + '% of engines): ' + name, 'A low percentage can be a false alarm, but a download from an unknown site deserves caution.', evid);
+    }
+    if (cc && cc.known) {
+      const what = [cc.name, cc.source].filter(Boolean).join(' · ');
+      if (cc.malicious) add('dl', 'crit', 'Known malware (CIRCL hashlookup): ' + name, 'This exact file is tagged as malicious by ' + cc.malicious + '.', evid + (what ? '\n' + what : ''), 'Do not open this file.');
+      else add('dl', 'info', 'File is in the CIRCL known-files set: ' + name, 'Its hash matches ' + (what || 'a catalogued file') + '. That means it is a known file, not that it is safe.', evid);
+    }
+    if (cy && cy.known === false && cc && cc.known === false) add('dl', 'info', 'File not in the free malware or known-file lists: ' + name, 'Team Cymru and CIRCL hashlookup have no record of it. New or rare files have none, so this proves nothing either way.', evid);
+    if ((cy && cy.error) || (cc && cc.error)) add('dl', 'info', 'A hash lookup failed', [cy && cy.error && 'Team Cymru: ' + cy.error, cc && cc.error && 'CIRCL: ' + cc.error].filter(Boolean).join('\n'), '');
     const vt = r.virustotal;
     if (vt && vt.known) {
       const n = vt.malicious + vt.suspicious, lbl = vt.label ? ' (' + vt.label + ')' : '';
@@ -1845,7 +1857,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       else add('dl', 'info', 'VirusTotal knows this file and flags nothing', vt.total + ' engines scanned it. A known clean file is a good sign.', evid);
     } else if (vt && vt.known === false) add('dl', 'info', 'File not known to VirusTotal: ' + name, 'New or rare files have no record yet. That is not proof they are safe.', evid);
     else if (vt && vt.error) add('dl', 'info', 'VirusTotal lookup failed', vt.error, '');
-    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'Reputation lookup is off', 'Start the helper with a VT_API_KEY environment variable to look up each file\'s hash on VirusTotal. Only the hash is sent.', ''); }
+    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'VirusTotal lookup is off', 'Team Cymru and CIRCL are checked for free. For more engines, start the helper with a VT_API_KEY environment variable to also look up each hash on VirusTotal. Only the hash is sent.', ''); }
     const k = r.kind || '';
     const expect = { exe: /Windows executable/, scr: /Windows executable/, msi: /installer/, dmg: /disk image|Encrypted/, zip: /ZIP/, apk: /ZIP/, jar: /ZIP/ }[ext.toLowerCase()];
     if (expect && !expect.test(k)) add('dl', 'high', name + ' is not what its name says', 'The name ends in .' + ext + ' but the content is: ' + k + '.', evid, 'Do not open it.');

@@ -346,7 +346,7 @@ def inspect_download(url, data=None, ctype=""):
         length = int(resp.headers.get("Content-Length") or 0)
         if length > DL_MAX:
             raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
-        sha = hashlib.sha256()
+        sha, md5, sha1 = hashlib.sha256(), hashlib.md5(), hashlib.sha1()
         head, tail, size = bytearray(), b"", 0
         total_counts = collections.Counter()
         sections, parsed, extra = [], False, {}
@@ -360,6 +360,8 @@ def inspect_download(url, data=None, ctype=""):
             if size + len(chunk) > DL_MAX:
                 raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
             sha.update(chunk)
+            md5.update(chunk)
+            sha1.update(chunk)
             if len(head) < DL_HEAD:
                 head += chunk[:DL_HEAD - len(head)]
             tail = (tail + chunk)[-DL_TAIL:]
@@ -374,7 +376,7 @@ def inspect_download(url, data=None, ctype=""):
                     sec_counts[s["name"] + str(i)].update(chunk[lo - size:hi - size])
             size += len(chunk)
     head = bytes(head)
-    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(),
+    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(), "sha1": sha1.hexdigest(), "md5": md5.hexdigest(),
             "contentType": resp.headers.get("Content-Type", ""), "disposition": resp.headers.get("Content-Disposition", ""),
             "entropy": round(entropy(total_counts, size), 2)}
     if head[:2] == b"MZ":
@@ -404,10 +406,47 @@ def inspect_download(url, data=None, ctype=""):
         info["kind"] = "Script"
     else:
         info["kind"] = "Unknown format"
+    if not os.environ.get("SNIFF_NO_LOOKUP"):
+        info["circl"] = circl_lookup(info["sha256"])
+        info["cymru"] = cymru_lookup(info["sha1"])
     vt = os.environ.get("VT_API_KEY")
     if vt:
         info["virustotal"] = vt_lookup(info["sha256"], vt)
     return info
+
+
+def circl_lookup(sha256):
+    """CIRCL hashlookup: free, no key. Knows files from NSRL and Linux/Android/Windows software sets and some malware
+    lists. Only the hash is sent."""
+    req = urllib.request.Request("https://hashlookup.circl.lu/lookup/sha256/" + sha256, headers={"User-Agent": UA, "Accept": "application/json"})
+    try:
+        with OPENER.open(req, timeout=15) as r:
+            d = json.loads(r.read(2_000_000))
+    except urllib.error.HTTPError as e:
+        return {"known": False} if e.code == 404 else {"error": "HTTP %d" % e.code}
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    return {"known": True, "malicious": str(d.get("KnownMalicious", ""))[:80], "name": str(d.get("FileName", ""))[:120],
+            "source": str(d.get("source", ""))[:80], "trust": d.get("hashlookup:trust")}
+
+
+def cymru_lookup(sha1):
+    """Team Cymru Malware Hash Registry: free, no key. A DNS TXT record "<time> <percent of AV engines flagging it>".
+    Python cannot query TXT records, so this goes through Cloudflare's DNS-over-HTTPS. Only the hash is sent."""
+    url = "https://cloudflare-dns.com/dns-query?type=TXT&name=" + sha1 + ".malware.hash.cymru.com"
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/dns-json"})
+    try:
+        with OPENER.open(req, timeout=15) as r:
+            d = json.loads(r.read(200_000))
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    if d.get("Status") == 3 or not d.get("Answer"):
+        return {"known": False}
+    try:
+        parts = str(d["Answer"][0]["data"]).strip('"').split()
+        return {"known": True, "detection": int(parts[1])}
+    except Exception:
+        return {"error": "unreadable answer"}
 
 
 def vt_lookup(sha256, key):

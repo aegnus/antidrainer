@@ -27,6 +27,12 @@ Safety rules built in:
 Needs only Python 3.8+, no extra packages.
 """
 import argparse
+import collections
+import hashlib
+import math
+import os
+import struct
+import time
 import http.server
 import ipaddress
 import json
@@ -336,6 +342,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
   <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
@@ -373,6 +380,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
           <span class="cell-ico"><svg class="ico"><use href="#i-hand"/></svg></span>
           <span class="cell-body"><span class="cell-title">Act like a victim</span><span class="cell-sub" style="display:block">Clicks connect, claim, confirm and similar buttons</span></span>
           <input type="checkbox" role="switch" class="switch" id="autoclick" checked>
+        </label>
+        <label class="cell" for="scandl">
+          <span class="cell-ico"><svg class="ico"><use href="#i-download"/></svg></span>
+          <span class="cell-body"><span class="cell-title">Check downloads</span><span class="cell-sub" style="display:block">Downloads linked installers (up to 5, 250 MB each) and reads them without running them. Needs the helper</span></span>
+          <input type="checkbox" role="switch" class="switch" id="scandl">
         </label>
         <div class="cell">
           <span class="cell-ico"><svg class="ico"><use href="#i-wallet"/></svg></span>
@@ -444,6 +456,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <button type="button" class="tab" role="tab" data-tab="src" aria-selected="false">Code <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="net" aria-selected="false">Network <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="js" aria-selected="false">Malicious JS <span class="badge"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="dl" aria-selected="false">Downloads <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="priv" aria-selected="false">Privacy <span class="badge"></span></button>
     </div>
 
@@ -453,6 +466,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <div class="group" data-group="rpc"><div class="group-head section-head"><h3>What it asked the test wallet</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="src"><div class="group-head section-head"><h3>Red flags in the code</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="net"><div class="group-head section-head"><h3>Where it tried to send data</h3><span class="count"></span></div><div class="list"></div></div>
+      <div class="group" data-group="dl"><div class="group-head section-head"><h3>Downloaded files</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="js"><div class="group-head section-head"><h3>Malicious JavaScript signs</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="priv"><div class="group-head section-head"><h3>Privacy: cookies, trackers, fingerprinting</h3><span class="count"></span></div><div class="list"></div></div>
     </div>
@@ -800,6 +814,20 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       };
       for (const p of ['hardwareConcurrency', 'deviceMemory', 'plugins', 'languages', 'platform', 'maxTouchPoints', 'userAgentData']) watch(window.Navigator && Navigator.prototype, p);
       for (const p of ['colorDepth', 'pixelDepth', 'availWidth', 'availHeight']) watch(window.Screen && Screen.prototype, p);
+    });
+    // Downloads started by script: a click on a link that downloads a program, with no click from the visitor.
+    guard(() => {
+      const DL = /\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)(\?|#|$)/i;
+      const oc = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        guard(() => {
+          if (this.hasAttribute('download') || DL.test(this.href || '')) {
+            const active = !!(navigator.userActivation && navigator.userActivation.isActive);
+            probe('autodl', this.href + active, { api: 'autodl', url: String(this.href).slice(0, 400), active });
+          }
+        });
+        return oc.apply(this, arguments);
+      };
     });
     // Global Privacy Control: the test visitor says "do not sell or share my data". Note who reads the signal.
     guard(() => {
@@ -1199,6 +1227,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   };
   function analyzeProbe(d) {
     if (d.api === 'cookie') return parseCookie(d.raw, pageHost(), d.by);
+    if (d.api === 'autodl') { queueDownload(d.url, d.active ? 'script click' : 'started by script without a click'); if (!d.active) add('dl', 'high', 'Starts a download on its own', 'A script clicked a download link without any click from the visitor. Drive-by downloads work like this.', d.url, 'Do not open a file you did not ask for.'); return; }
     if (d.api === 'gpc') { P.gpcRead.add(d.by); return render(); }
     if (d.api === 'pixel') { P.pixels.set(d.url, 'seen in page'); noteHost(hostOf(d.url), d.url, 'image'); return render(); }
     if (d.api === 'clip') {
@@ -1237,6 +1266,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   function scanMarkup(html, u) {
     let doc; try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { return; }
     const base = baseDomain(u.hostname);
+    doc.querySelectorAll('a[href]').forEach(a => {
+      try {
+        const abs = new URL(a.getAttribute('href'), u.href);
+        if (/^https?:$/.test(abs.protocol) && (DL_LINK.test(abs.pathname) || a.hasAttribute('download') && /\.[a-z0-9]{2,4}$/i.test(abs.pathname))) queueDownload(abs.href, 'a link on the page');
+      } catch (_) {}
+    });
     doc.querySelectorAll('script[src], img[src], iframe[src], source[src], embed[src], link[href]').forEach(el => {
       const raw = el.getAttribute('src') || el.getAttribute('href');
       let abs; try { abs = new URL(raw, u.href); } catch (_) { return; }
@@ -1317,8 +1352,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 
   const PRIV_PEN = { crit: 30, high: 15, med: 6, info: 0 };
   function exportReport() {
-    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
-    const js = findings.filter(f => f.group === 'js'), pr = findings.filter(f => f.group === 'priv');
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'dl' && f.group !== 'priv');
+    const js = findings.filter(f => f.group === 'js' || f.group === 'dl'), pr = findings.filter(f => f.group === 'priv');
     const privScore = Math.max(0, 100 - pr.reduce((s, f) => s + PRIV_PEN[f.sev], 0));
     const report = {
       tool: 'Sniff Test: Security & Privacy Checker',
@@ -1353,7 +1388,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     document.getElementById('export').disabled = !run;
     const set = (id, level, num, sub) => { const c = document.getElementById('sc-' + id); c.dataset.level = level; document.getElementById('sc-' + id + '-num').innerHTML = num; document.getElementById('sc-' + id + '-sub').textContent = sub; };
     if (!run) { set('js', 'none', '–', 'Not tested yet'); set('priv', 'none', '–', 'Not tested yet'); return; }
-    const js = findings.filter(f => f.group === 'js').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
+    const js = findings.filter(f => f.group === 'js' || f.group === 'dl').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
     const risk = Math.min(100, js.reduce((s, f) => s + SEV[f.sev], 0));
     const crit = js.some(f => f.sev === 'crit');
     set('js', crit || risk >= 60 ? 'crit' : risk >= 30 ? 'high' : 'ok', risk + '<small> / 100 risk</small>',
@@ -1492,7 +1527,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     renderScores();
     // The verdict covers wallet-drainer behaviour only; malicious-code and privacy findings have their own scores.
-    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'dl' && f.group !== 'priv');
     const score = drain.reduce((s, f) => s + SEV[f.sev], 0);
     const crit = drain.filter(f => f.sev === 'crit').length;
     const v = document.getElementById('verdict');
@@ -1731,6 +1766,64 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     } catch (_) { if (myRun === run) add('src', 'info', 'Could not download a script file', 'This file was not scanned.', abs); }
   }
 
+  /* ---------- Downloaded programs: hashed and read in the helper, never run ---------- */
+  const DL_LINK = /\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)$/i;
+  const DL_MAX_FILES = 5;
+  let dlQueue = Promise.resolve(), dlSeen = new Set(), dlNoKeyNoted = false;
+  const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  function queueDownload(url, why) {
+    if (!url || dlSeen.has(url) || dlSeen.size >= DL_MAX_FILES) return;
+    dlSeen.add(url);
+    let name = url; try { name = decodeURIComponent(url.split('?')[0].split('/').pop() || url).slice(0, 60); } catch (_) {}
+    if (!document.getElementById('scandl').checked) return add('dl', 'info', 'Offers a program download: ' + name, 'Not checked because "Check downloads" is off. It was found as: ' + why + '.', url, 'Turn on "Check downloads" and test again to hash it and read its headers without running it.');
+    if (!HELPER) return add('dl', 'info', 'Offers a program download: ' + name, 'Checking downloads needs the local helper.', url);
+    const myRun = run;
+    dlQueue = dlQueue.then(() => scanDownload(url, name, why, myRun)).catch(() => {});
+  }
+  async function scanDownload(url, name, why, myRun) {
+    status.textContent = 'Checking download ' + name + '…';
+    let r;
+    try { r = JSON.parse((await getText('/scan-file?url=' + encodeURIComponent(url), 170000, { 'X-Bench-Token': HELPER.token })).text); }
+    catch (e) { if (myRun === run) add('dl', 'info', 'Could not check ' + name, e.message, url); return; }
+    if (myRun !== run) return;
+    const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+    const facts = [r.kind, fmtSize(r.size), 'entropy ' + r.entropy, r.machine, r.signed === true ? 'signed' : r.signed === false ? 'unsigned' : '', r.dotnet ? '.NET' : ''].filter(Boolean).join(' · ');
+    add('dl', 'info', 'Checked ' + name, facts + '. Found as: ' + why + '.', url + '\nSHA-256 ' + r.sha256, 'Search the SHA-256 on VirusTotal to see what other engines say.');
+    const evid = url + '\nSHA-256 ' + r.sha256;
+    if (APT29_HASHES.has(r.sha256)) add('dl', 'crit', 'File matches a published APT29 exploit payload', name + ' has a SHA-256 listed in Sekoia\'s report.', evid, 'Do not open this file.');
+    const vt = r.virustotal;
+    if (vt && vt.known) {
+      const n = vt.malicious + vt.suspicious, lbl = vt.label ? ' (' + vt.label + ')' : '';
+      if (vt.malicious >= 5) add('dl', 'crit', 'Known malware: ' + vt.malicious + ' of ' + vt.total + ' engines flag ' + name, 'VirusTotal\'s scan of this exact file' + lbl + '.', evid, 'Do not open this file.');
+      else if (n >= 1) add('dl', 'high', 'Flagged by ' + n + ' of ' + vt.total + ' VirusTotal engines: ' + name, 'A few detections can be false alarms, but a download from an unknown site deserves caution' + lbl + '.', evid);
+      else add('dl', 'info', 'VirusTotal knows this file and flags nothing', vt.total + ' engines scanned it. A known clean file is a good sign.', evid);
+    } else if (vt && vt.known === false) add('dl', 'info', 'File not known to VirusTotal: ' + name, 'New or rare files have no record yet. That is not proof they are safe.', evid);
+    else if (vt && vt.error) add('dl', 'info', 'VirusTotal lookup failed', vt.error, '');
+    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'Reputation lookup is off', 'Start the helper with a VT_API_KEY environment variable to look up each file\'s hash on VirusTotal. Only the hash is sent.', ''); }
+    const k = r.kind || '';
+    const expect = { exe: /Windows executable/, scr: /Windows executable/, msi: /installer/, dmg: /disk image|Encrypted/, zip: /ZIP/, apk: /ZIP/, jar: /ZIP/ }[ext.toLowerCase()];
+    if (expect && !expect.test(k)) add('dl', 'high', name + ' is not what its name says', 'The name ends in .' + ext + ' but the content is: ' + k + '.', evid, 'Do not open it.');
+    if (/Windows executable/.test(k)) {
+      if (r.signed === false) add('dl', siteVerified ? 'med' : 'high', 'Unsigned Windows program: ' + name, 'It carries no publisher signature, so Windows cannot tell you who made it.', evid, 'Prefer the publisher\'s official download. Check Properties > Digital Signatures before running.');
+      else if (r.signed) add('dl', 'info', 'Windows program has a signature: ' + name, 'A signature is present but its validity and publisher were not checked here.', evid, 'Check Properties > Digital Signatures, or Get-AuthenticodeSignature in PowerShell, before running.');
+      const secs = r.sections || [];
+      const packed = secs.filter(x => x.packer || (x.exec && x.entropy !== null && x.entropy > 7.2));
+      if (packed.length) add('dl', 'high', 'Packed or encrypted code in ' + name, 'Packers hide the real program from scanners. Some legitimate software uses them, but malware relies on them.', packed.map(x => x.name + ' (entropy ' + x.entropy + (x.packer ? ', known packer name' : '') + ')').join('\n'));
+      const wx = secs.filter(x => x.exec && x.write);
+      if (wx.length) add('dl', 'med', 'Writable and executable section in ' + name, 'Code that can rewrite itself is a common way to unpack hidden code at run time.', wx.map(x => x.name).join(', '));
+      if (r.timestamp && r.timestamp * 1000 > Date.now() + 864e5) add('dl', 'med', 'Build date is in the future: ' + name, 'A forged build time is a small sign of tampering.', new Date(r.timestamp * 1000).toISOString());
+    }
+    if (/macOS executable/.test(k) && r.signed === false) add('dl', 'high', 'Unsigned macOS program: ' + name, 'It has no code signature, which current macOS requires even for locally built apps.', evid, 'Check with: codesign -dv --verbose=4 <file>');
+    if (/disk image/.test(k)) add('dl', 'info', 'Disk image contents were not opened: ' + name, 'Its signature and the app inside need codesign and spctl, which this check does not run.', evid, 'Verify with: codesign -dv <file>.dmg and spctl --assess --type open --context context:primary-signature <file>.dmg');
+    if (r.encrypted) add('dl', 'med', 'Password-protected file: ' + name, 'Encryption keeps scanners from reading the contents. Legitimate downloads rarely need it.', evid);
+    if (r.names && r.names.length) {
+      const risky = r.names.filter(n => /\.(exe|scr|lnk|js|jse|vbs|vbe|wsf|bat|cmd|ps1|msi|jar|com|hta|command|sh)$/i.test(n));
+      const dbl = r.names.filter(n => /\.(pdf|docx?|xlsx?|jpe?g|png|txt)\.(exe|scr|lnk|js|vbs|bat|cmd|com)$/i.test(n));
+      if (dbl.length) add('dl', 'high', 'Archive hides a program behind a document name', 'A file such as report.pdf.exe looks like a document but runs as a program.', dbl.slice(0, 8).join('\n'));
+      else if (risky.length) add('dl', 'med', 'Archive contains programs or scripts: ' + name, risky.length + ' of ' + r.names.length + ' listed files can run code.', risky.slice(0, 12).join('\n'));
+    }
+  }
+
   /* ---------- Phone check: does the page send different code to phones? ---------- */
   // Some campaigns serve their payload only to iOS or Android visitors. The pages are fetched and read, never run.
   const PHONES = [['ios16', 'iPhone (iOS 16.7)'], ['ios18', 'iPhone (iOS 18.5)'], ['android', 'Android (Chrome 140)']];
@@ -1786,6 +1879,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     showError('');
     srcCache.clear(); closeViewer();
     findings = []; keys = new Set(); scanned.clear(); scriptCount = 0; siteVerified = false; resetPriv();
+    dlQueue = Promise.resolve(); dlSeen = new Set(); dlNoKeyNoted = false;
     const myRun = run = Math.random().toString(36).slice(2);
     currentUrl = u.href;
     document.getElementById('guard').hidden = true;
@@ -2137,6 +2231,193 @@ def record(url, status, headers, size):
                 STATE["cookies"].append({"url": url, "raw": raw[:600]})
 
 
+DL_MAX = 250 * 1024 * 1024   # largest file the bench will inspect
+DL_HEAD = 2 * 1024 * 1024    # bytes kept from the start for header parsing
+DL_TAIL = 256 * 1024         # bytes kept from the end (zip directory, disk-image trailer)
+DL_SECONDS = 150
+PACKER_SECTIONS = ("upx0", "upx1", "upx2", ".themida", ".vmp0", ".vmp1", ".enigma1", ".aspack", ".adata", ".petite", ".mpress1", ".nsp0")
+RISKY_INSIDE = (".exe", ".scr", ".lnk", ".js", ".jse", ".vbs", ".vbe", ".wsf", ".bat", ".cmd", ".ps1", ".msi", ".jar", ".com", ".hta", ".app", ".pkg", ".dmg", ".command", ".sh")
+
+
+def entropy(counts, total):
+    if not total:
+        return 0.0
+    return -sum(c / total * math.log2(c / total) for c in counts.values() if c)
+
+
+def parse_pe(head, size):
+    """Read a Windows executable's headers. Returns facts, never runs or loads anything."""
+    out = {"kind": "Windows executable"}
+    if len(head) < 0x40:
+        return out, []
+    pe = struct.unpack_from("<I", head, 0x3C)[0]
+    if pe + 24 > len(head) or head[pe:pe + 4] != b"PE\0\0":
+        out["note"] = "MZ header without a valid PE header"
+        return out, []
+    machine, nsec, stamp, _, _, optsize, chars = struct.unpack_from("<HHIIIHH", head, pe + 4)
+    out.update(machine={0x14c: "x86", 0x8664: "x64", 0xaa64: "arm64"}.get(machine, hex(machine)), dll=bool(chars & 0x2000), timestamp=stamp)
+    opt = pe + 24
+    magic = struct.unpack_from("<H", head, opt)[0] if opt + 2 <= len(head) else 0
+    dd = opt + (96 if magic == 0x10b else 112)
+    def entry(i):
+        o = dd + 8 * i
+        return struct.unpack_from("<II", head, o) if o + 8 <= len(head) else (0, 0)
+    cert_off, cert_size = entry(4)
+    out["signed"] = cert_size > 0
+    out["dotnet"] = entry(14)[1] > 0
+    sec_start = opt + optsize
+    sections = []
+    for i in range(min(nsec, 96)):
+        o = sec_start + 40 * i
+        if o + 40 > len(head):
+            break
+        name = head[o:o + 8].rstrip(b"\0").decode("latin-1")
+        vsize, vaddr, rsize, rptr, _, _, _, _, flags = struct.unpack_from("<IIIIIIHHI", head, o + 8)
+        sections.append({"name": name, "start": rptr, "end": rptr + rsize, "flags": flags})
+    return out, sections
+
+
+def parse_macho(head):
+    out = {"kind": "macOS executable"}
+    magic = head[:4]
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        is64 = magic[0] == 0xcf
+        cpu, _, ftype, ncmds, _, flags = struct.unpack_from("<iiIIII", head, 4)[:6] if len(head) >= 28 else (0,) * 6
+        out.update(cpu={7: "x86", 0x01000007: "x64", 12: "arm", 0x0100000c: "arm64"}.get(cpu, str(cpu)),
+                   type={1: "object", 2: "executable", 6: "library", 8: "bundle"}.get(ftype, str(ftype)))
+        off = 32 if is64 else 28
+        signed = False
+        for _ in range(min(ncmds, 400)):
+            if off + 8 > len(head):
+                break
+            cmd, size = struct.unpack_from("<II", head, off)
+            if cmd == 0x1d:
+                signed = True
+            if size < 8:
+                break
+            off += size
+        out["signed"] = signed
+    else:
+        out["kind"] = "macOS universal binary"
+        out["note"] = "Contains several architectures. Check its signature with codesign."
+    return out
+
+
+def parse_zip(tail, size):
+    out = {"kind": "ZIP archive", "names": [], "encrypted": False}
+    i = tail.rfind(b"PK\x05\x06")
+    if i < 0 or i + 22 > len(tail):
+        return out
+    count, cd_size, cd_off = struct.unpack_from("<HII", tail, i + 10)
+    base = size - len(tail)
+    pos = cd_off - base
+    if pos < 0 or pos + cd_size > len(tail) + 0:
+        out["note"] = "File list not read (archive directory is far from the end)"
+        return out
+    for _ in range(min(count, 400)):
+        if pos + 46 > len(tail) or tail[pos:pos + 4] != b"PK\x01\x02":
+            break
+        flag = struct.unpack_from("<H", tail, pos + 8)[0]
+        nlen, elen, clen = struct.unpack_from("<HHH", tail, pos + 28)
+        out["names"].append(tail[pos + 46:pos + 46 + nlen].decode("utf-8", "replace"))
+        if flag & 1:
+            out["encrypted"] = True
+        pos += 46 + nlen + elen + clen
+    out["entries"] = count
+    return out
+
+
+def inspect_download(url):
+    """Download url into memory only (never to disk), hash it and read its headers. Nothing is run or opened."""
+    check_target(url)
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    started = time.time()
+    with OPENER.open(req, timeout=25) as resp:
+        if resp.status >= 400:
+            raise ValueError("The site answered with HTTP %d." % resp.status)
+        length = int(resp.headers.get("Content-Length") or 0)
+        if length > DL_MAX:
+            raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
+        sha = hashlib.sha256()
+        head, tail, size = bytearray(), b"", 0
+        total_counts = collections.Counter()
+        sections, parsed, extra = [], False, {}
+        sec_counts = {}
+        while True:
+            if time.time() - started > DL_SECONDS:
+                raise TimeoutError("took longer than %d seconds" % DL_SECONDS)
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            if size + len(chunk) > DL_MAX:
+                raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
+            sha.update(chunk)
+            if len(head) < DL_HEAD:
+                head += chunk[:DL_HEAD - len(head)]
+            tail = (tail + chunk)[-DL_TAIL:]
+            total_counts.update(chunk)
+            if not parsed and len(head) >= min(DL_HEAD, 4096) and head[:2] == b"MZ":
+                extra, sections = parse_pe(bytes(head), 0)
+                sec_counts = {s["name"] + str(i): collections.Counter() for i, s in enumerate(sections)}
+                parsed = True
+            for i, s in enumerate(sections):
+                lo, hi = max(s["start"], size), min(s["end"], size + len(chunk))
+                if hi > lo and s["end"] > s["start"]:
+                    sec_counts[s["name"] + str(i)].update(chunk[lo - size:hi - size])
+            size += len(chunk)
+    head = bytes(head)
+    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(),
+            "contentType": resp.headers.get("Content-Type", ""), "disposition": resp.headers.get("Content-Disposition", ""),
+            "entropy": round(entropy(total_counts, size), 2)}
+    if head[:2] == b"MZ":
+        if not parsed:
+            extra, sections = parse_pe(head, size)
+        info.update(extra)
+        info["sections"] = []
+        for i, s in enumerate(sections):
+            c = sec_counts.get(s["name"] + str(i), collections.Counter())
+            n = sum(c.values())
+            info["sections"].append({"name": s["name"], "entropy": round(entropy(c, n), 2) if n > 4096 else None,
+                                     "exec": bool(s["flags"] & 0x20000000), "write": bool(s["flags"] & 0x80000000),
+                                     "packer": s["name"].lower() in PACKER_SECTIONS})
+    elif head[:4] in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
+        info.update(parse_macho(head))
+    elif head[:4] == b"PK\x03\x04" or head[:4] == b"PK\x05\x06":
+        info.update(parse_zip(tail, size))
+    elif head[:8] in (b"encrcdsa", b"cdsaencr"):
+        info.update(kind="Encrypted disk image", encrypted=True)
+    elif len(tail) >= 512 and tail[-512:-508] == b"koly":
+        info["kind"] = "macOS disk image (DMG)"
+    elif head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        info["kind"] = "Microsoft installer or Office file"
+    elif head[:4] == b"\x7fELF":
+        info["kind"] = "Linux executable"
+    elif head[:2] == b"#!":
+        info["kind"] = "Script"
+    else:
+        info["kind"] = "Unknown format"
+    vt = os.environ.get("VT_API_KEY")
+    if vt:
+        info["virustotal"] = vt_lookup(info["sha256"], vt)
+    return info
+
+
+def vt_lookup(sha256, key):
+    """Ask VirusTotal about a hash. Only the hash leaves this machine, never the file."""
+    req = urllib.request.Request("https://www.virustotal.com/api/v3/files/" + sha256, headers={"x-apikey": key, "User-Agent": UA})
+    try:
+        with OPENER.open(req, timeout=20) as r:
+            a = json.loads(r.read(2_000_000)).get("data", {}).get("attributes", {})
+    except urllib.error.HTTPError as e:
+        return {"known": False} if e.code == 404 else {"error": "HTTP %d" % e.code}
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    stats = a.get("last_analysis_stats", {})
+    pop = (a.get("popular_threat_classification") or {}).get("suggested_threat_label", "")
+    return {"known": True, "malicious": stats.get("malicious", 0), "suspicious": stats.get("suspicious", 0),
+            "total": sum(stats.values()), "label": pop}
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -2208,6 +2489,14 @@ class BenchHandler(Base):
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
+        if parsed.path == "/scan-file":
+            if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
+                return self.send_body(403, "Refused.")
+            target = urllib.parse.parse_qs(parsed.query).get("url", [""])[0]
+            try:
+                return self.send_body(200, json.dumps(inspect_download(target)), "application/json", {"Cache-Control": "no-store"})
+            except Exception as e:
+                return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
         if parsed.path == "/log":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")

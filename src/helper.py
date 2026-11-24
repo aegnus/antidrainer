@@ -26,6 +26,12 @@ Safety rules built in:
 Needs only Python 3.8+, no extra packages.
 """
 import argparse
+import collections
+import hashlib
+import math
+import os
+import struct
+import time
 import http.server
 import ipaddress
 import json
@@ -207,6 +213,193 @@ def record(url, status, headers, size):
                 STATE["cookies"].append({"url": url, "raw": raw[:600]})
 
 
+DL_MAX = 250 * 1024 * 1024   # largest file the bench will inspect
+DL_HEAD = 2 * 1024 * 1024    # bytes kept from the start for header parsing
+DL_TAIL = 256 * 1024         # bytes kept from the end (zip directory, disk-image trailer)
+DL_SECONDS = 150
+PACKER_SECTIONS = ("upx0", "upx1", "upx2", ".themida", ".vmp0", ".vmp1", ".enigma1", ".aspack", ".adata", ".petite", ".mpress1", ".nsp0")
+RISKY_INSIDE = (".exe", ".scr", ".lnk", ".js", ".jse", ".vbs", ".vbe", ".wsf", ".bat", ".cmd", ".ps1", ".msi", ".jar", ".com", ".hta", ".app", ".pkg", ".dmg", ".command", ".sh")
+
+
+def entropy(counts, total):
+    if not total:
+        return 0.0
+    return -sum(c / total * math.log2(c / total) for c in counts.values() if c)
+
+
+def parse_pe(head, size):
+    """Read a Windows executable's headers. Returns facts, never runs or loads anything."""
+    out = {"kind": "Windows executable"}
+    if len(head) < 0x40:
+        return out, []
+    pe = struct.unpack_from("<I", head, 0x3C)[0]
+    if pe + 24 > len(head) or head[pe:pe + 4] != b"PE\0\0":
+        out["note"] = "MZ header without a valid PE header"
+        return out, []
+    machine, nsec, stamp, _, _, optsize, chars = struct.unpack_from("<HHIIIHH", head, pe + 4)
+    out.update(machine={0x14c: "x86", 0x8664: "x64", 0xaa64: "arm64"}.get(machine, hex(machine)), dll=bool(chars & 0x2000), timestamp=stamp)
+    opt = pe + 24
+    magic = struct.unpack_from("<H", head, opt)[0] if opt + 2 <= len(head) else 0
+    dd = opt + (96 if magic == 0x10b else 112)
+    def entry(i):
+        o = dd + 8 * i
+        return struct.unpack_from("<II", head, o) if o + 8 <= len(head) else (0, 0)
+    cert_off, cert_size = entry(4)
+    out["signed"] = cert_size > 0
+    out["dotnet"] = entry(14)[1] > 0
+    sec_start = opt + optsize
+    sections = []
+    for i in range(min(nsec, 96)):
+        o = sec_start + 40 * i
+        if o + 40 > len(head):
+            break
+        name = head[o:o + 8].rstrip(b"\0").decode("latin-1")
+        vsize, vaddr, rsize, rptr, _, _, _, _, flags = struct.unpack_from("<IIIIIIHHI", head, o + 8)
+        sections.append({"name": name, "start": rptr, "end": rptr + rsize, "flags": flags})
+    return out, sections
+
+
+def parse_macho(head):
+    out = {"kind": "macOS executable"}
+    magic = head[:4]
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        is64 = magic[0] == 0xcf
+        cpu, _, ftype, ncmds, _, flags = struct.unpack_from("<iiIIII", head, 4)[:6] if len(head) >= 28 else (0,) * 6
+        out.update(cpu={7: "x86", 0x01000007: "x64", 12: "arm", 0x0100000c: "arm64"}.get(cpu, str(cpu)),
+                   type={1: "object", 2: "executable", 6: "library", 8: "bundle"}.get(ftype, str(ftype)))
+        off = 32 if is64 else 28
+        signed = False
+        for _ in range(min(ncmds, 400)):
+            if off + 8 > len(head):
+                break
+            cmd, size = struct.unpack_from("<II", head, off)
+            if cmd == 0x1d:
+                signed = True
+            if size < 8:
+                break
+            off += size
+        out["signed"] = signed
+    else:
+        out["kind"] = "macOS universal binary"
+        out["note"] = "Contains several architectures. Check its signature with codesign."
+    return out
+
+
+def parse_zip(tail, size):
+    out = {"kind": "ZIP archive", "names": [], "encrypted": False}
+    i = tail.rfind(b"PK\x05\x06")
+    if i < 0 or i + 22 > len(tail):
+        return out
+    count, cd_size, cd_off = struct.unpack_from("<HII", tail, i + 10)
+    base = size - len(tail)
+    pos = cd_off - base
+    if pos < 0 or pos + cd_size > len(tail) + 0:
+        out["note"] = "File list not read (archive directory is far from the end)"
+        return out
+    for _ in range(min(count, 400)):
+        if pos + 46 > len(tail) or tail[pos:pos + 4] != b"PK\x01\x02":
+            break
+        flag = struct.unpack_from("<H", tail, pos + 8)[0]
+        nlen, elen, clen = struct.unpack_from("<HHH", tail, pos + 28)
+        out["names"].append(tail[pos + 46:pos + 46 + nlen].decode("utf-8", "replace"))
+        if flag & 1:
+            out["encrypted"] = True
+        pos += 46 + nlen + elen + clen
+    out["entries"] = count
+    return out
+
+
+def inspect_download(url):
+    """Download url into memory only (never to disk), hash it and read its headers. Nothing is run or opened."""
+    check_target(url)
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    started = time.time()
+    with OPENER.open(req, timeout=25) as resp:
+        if resp.status >= 400:
+            raise ValueError("The site answered with HTTP %d." % resp.status)
+        length = int(resp.headers.get("Content-Length") or 0)
+        if length > DL_MAX:
+            raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
+        sha = hashlib.sha256()
+        head, tail, size = bytearray(), b"", 0
+        total_counts = collections.Counter()
+        sections, parsed, extra = [], False, {}
+        sec_counts = {}
+        while True:
+            if time.time() - started > DL_SECONDS:
+                raise TimeoutError("took longer than %d seconds" % DL_SECONDS)
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            if size + len(chunk) > DL_MAX:
+                raise OverflowError("larger than %d MB" % (DL_MAX // 1048576))
+            sha.update(chunk)
+            if len(head) < DL_HEAD:
+                head += chunk[:DL_HEAD - len(head)]
+            tail = (tail + chunk)[-DL_TAIL:]
+            total_counts.update(chunk)
+            if not parsed and len(head) >= min(DL_HEAD, 4096) and head[:2] == b"MZ":
+                extra, sections = parse_pe(bytes(head), 0)
+                sec_counts = {s["name"] + str(i): collections.Counter() for i, s in enumerate(sections)}
+                parsed = True
+            for i, s in enumerate(sections):
+                lo, hi = max(s["start"], size), min(s["end"], size + len(chunk))
+                if hi > lo and s["end"] > s["start"]:
+                    sec_counts[s["name"] + str(i)].update(chunk[lo - size:hi - size])
+            size += len(chunk)
+    head = bytes(head)
+    info = {"url": url, "finalUrl": resp.geturl(), "size": size, "sha256": sha.hexdigest(),
+            "contentType": resp.headers.get("Content-Type", ""), "disposition": resp.headers.get("Content-Disposition", ""),
+            "entropy": round(entropy(total_counts, size), 2)}
+    if head[:2] == b"MZ":
+        if not parsed:
+            extra, sections = parse_pe(head, size)
+        info.update(extra)
+        info["sections"] = []
+        for i, s in enumerate(sections):
+            c = sec_counts.get(s["name"] + str(i), collections.Counter())
+            n = sum(c.values())
+            info["sections"].append({"name": s["name"], "entropy": round(entropy(c, n), 2) if n > 4096 else None,
+                                     "exec": bool(s["flags"] & 0x20000000), "write": bool(s["flags"] & 0x80000000),
+                                     "packer": s["name"].lower() in PACKER_SECTIONS})
+    elif head[:4] in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
+        info.update(parse_macho(head))
+    elif head[:4] == b"PK\x03\x04" or head[:4] == b"PK\x05\x06":
+        info.update(parse_zip(tail, size))
+    elif head[:8] in (b"encrcdsa", b"cdsaencr"):
+        info.update(kind="Encrypted disk image", encrypted=True)
+    elif len(tail) >= 512 and tail[-512:-508] == b"koly":
+        info["kind"] = "macOS disk image (DMG)"
+    elif head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        info["kind"] = "Microsoft installer or Office file"
+    elif head[:4] == b"\x7fELF":
+        info["kind"] = "Linux executable"
+    elif head[:2] == b"#!":
+        info["kind"] = "Script"
+    else:
+        info["kind"] = "Unknown format"
+    vt = os.environ.get("VT_API_KEY")
+    if vt:
+        info["virustotal"] = vt_lookup(info["sha256"], vt)
+    return info
+
+
+def vt_lookup(sha256, key):
+    """Ask VirusTotal about a hash. Only the hash leaves this machine, never the file."""
+    req = urllib.request.Request("https://www.virustotal.com/api/v3/files/" + sha256, headers={"x-apikey": key, "User-Agent": UA})
+    try:
+        with OPENER.open(req, timeout=20) as r:
+            a = json.loads(r.read(2_000_000)).get("data", {}).get("attributes", {})
+    except urllib.error.HTTPError as e:
+        return {"known": False} if e.code == 404 else {"error": "HTTP %d" % e.code}
+    except Exception as e:
+        return {"error": str(e)[:120]}
+    stats = a.get("last_analysis_stats", {})
+    pop = (a.get("popular_threat_classification") or {}).get("suggested_threat_label", "")
+    return {"known": True, "malicious": stats.get("malicious", 0), "suspicious": stats.get("suspicious", 0),
+            "total": sum(stats.values()), "label": pop}
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -278,6 +471,14 @@ class BenchHandler(Base):
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
+        if parsed.path == "/scan-file":
+            if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
+                return self.send_body(403, "Refused.")
+            target = urllib.parse.parse_qs(parsed.query).get("url", [""])[0]
+            try:
+                return self.send_body(200, json.dumps(inspect_download(target)), "application/json", {"Cache-Control": "no-store"})
+            except Exception as e:
+                return self.send_body(403 if isinstance(e, ValueError) else 502, friendly_error(e))
         if parsed.path == "/log":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")

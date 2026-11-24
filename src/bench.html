@@ -294,6 +294,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
   <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
@@ -331,6 +332,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
           <span class="cell-ico"><svg class="ico"><use href="#i-hand"/></svg></span>
           <span class="cell-body"><span class="cell-title">Act like a victim</span><span class="cell-sub" style="display:block">Clicks connect, claim, confirm and similar buttons</span></span>
           <input type="checkbox" role="switch" class="switch" id="autoclick" checked>
+        </label>
+        <label class="cell" for="scandl">
+          <span class="cell-ico"><svg class="ico"><use href="#i-download"/></svg></span>
+          <span class="cell-body"><span class="cell-title">Check downloads</span><span class="cell-sub" style="display:block">Downloads linked installers (up to 5, 250 MB each) and reads them without running them. Needs the helper</span></span>
+          <input type="checkbox" role="switch" class="switch" id="scandl">
         </label>
         <div class="cell">
           <span class="cell-ico"><svg class="ico"><use href="#i-wallet"/></svg></span>
@@ -402,6 +408,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <button type="button" class="tab" role="tab" data-tab="src" aria-selected="false">Code <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="net" aria-selected="false">Network <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="js" aria-selected="false">Malicious JS <span class="badge"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="dl" aria-selected="false">Downloads <span class="badge"></span></button>
       <button type="button" class="tab" role="tab" data-tab="priv" aria-selected="false">Privacy <span class="badge"></span></button>
     </div>
 
@@ -411,6 +418,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       <div class="group" data-group="rpc"><div class="group-head section-head"><h3>What it asked the test wallet</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="src"><div class="group-head section-head"><h3>Red flags in the code</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="net"><div class="group-head section-head"><h3>Where it tried to send data</h3><span class="count"></span></div><div class="list"></div></div>
+      <div class="group" data-group="dl"><div class="group-head section-head"><h3>Downloaded files</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="js"><div class="group-head section-head"><h3>Malicious JavaScript signs</h3><span class="count"></span></div><div class="list"></div></div>
       <div class="group" data-group="priv"><div class="group-head section-head"><h3>Privacy: cookies, trackers, fingerprinting</h3><span class="count"></span></div><div class="list"></div></div>
     </div>
@@ -758,6 +766,20 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
       };
       for (const p of ['hardwareConcurrency', 'deviceMemory', 'plugins', 'languages', 'platform', 'maxTouchPoints', 'userAgentData']) watch(window.Navigator && Navigator.prototype, p);
       for (const p of ['colorDepth', 'pixelDepth', 'availWidth', 'availHeight']) watch(window.Screen && Screen.prototype, p);
+    });
+    // Downloads started by script: a click on a link that downloads a program, with no click from the visitor.
+    guard(() => {
+      const DL = /\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)(\?|#|$)/i;
+      const oc = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        guard(() => {
+          if (this.hasAttribute('download') || DL.test(this.href || '')) {
+            const active = !!(navigator.userActivation && navigator.userActivation.isActive);
+            probe('autodl', this.href + active, { api: 'autodl', url: String(this.href).slice(0, 400), active });
+          }
+        });
+        return oc.apply(this, arguments);
+      };
     });
     // Global Privacy Control: the test visitor says "do not sell or share my data". Note who reads the signal.
     guard(() => {
@@ -1157,6 +1179,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   };
   function analyzeProbe(d) {
     if (d.api === 'cookie') return parseCookie(d.raw, pageHost(), d.by);
+    if (d.api === 'autodl') { queueDownload(d.url, d.active ? 'script click' : 'started by script without a click'); if (!d.active) add('dl', 'high', 'Starts a download on its own', 'A script clicked a download link without any click from the visitor. Drive-by downloads work like this.', d.url, 'Do not open a file you did not ask for.'); return; }
     if (d.api === 'gpc') { P.gpcRead.add(d.by); return render(); }
     if (d.api === 'pixel') { P.pixels.set(d.url, 'seen in page'); noteHost(hostOf(d.url), d.url, 'image'); return render(); }
     if (d.api === 'clip') {
@@ -1195,6 +1218,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   function scanMarkup(html, u) {
     let doc; try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { return; }
     const base = baseDomain(u.hostname);
+    doc.querySelectorAll('a[href]').forEach(a => {
+      try {
+        const abs = new URL(a.getAttribute('href'), u.href);
+        if (/^https?:$/.test(abs.protocol) && (DL_LINK.test(abs.pathname) || a.hasAttribute('download') && /\.[a-z0-9]{2,4}$/i.test(abs.pathname))) queueDownload(abs.href, 'a link on the page');
+      } catch (_) {}
+    });
     doc.querySelectorAll('script[src], img[src], iframe[src], source[src], embed[src], link[href]').forEach(el => {
       const raw = el.getAttribute('src') || el.getAttribute('href');
       let abs; try { abs = new URL(raw, u.href); } catch (_) { return; }
@@ -1275,8 +1304,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
 
   const PRIV_PEN = { crit: 30, high: 15, med: 6, info: 0 };
   function exportReport() {
-    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
-    const js = findings.filter(f => f.group === 'js'), pr = findings.filter(f => f.group === 'priv');
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'dl' && f.group !== 'priv');
+    const js = findings.filter(f => f.group === 'js' || f.group === 'dl'), pr = findings.filter(f => f.group === 'priv');
     const privScore = Math.max(0, 100 - pr.reduce((s, f) => s + PRIV_PEN[f.sev], 0));
     const report = {
       tool: 'Sniff Test: Security & Privacy Checker',
@@ -1311,7 +1340,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     document.getElementById('export').disabled = !run;
     const set = (id, level, num, sub) => { const c = document.getElementById('sc-' + id); c.dataset.level = level; document.getElementById('sc-' + id + '-num').innerHTML = num; document.getElementById('sc-' + id + '-sub').textContent = sub; };
     if (!run) { set('js', 'none', '–', 'Not tested yet'); set('priv', 'none', '–', 'Not tested yet'); return; }
-    const js = findings.filter(f => f.group === 'js').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
+    const js = findings.filter(f => f.group === 'js' || f.group === 'dl').sort((a, b) => SEV[b.sev] - SEV[a.sev]);
     const risk = Math.min(100, js.reduce((s, f) => s + SEV[f.sev], 0));
     const crit = js.some(f => f.sev === 'crit');
     set('js', crit || risk >= 60 ? 'crit' : risk >= 30 ? 'high' : 'ok', risk + '<small> / 100 risk</small>',
@@ -1450,7 +1479,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     renderScores();
     // The verdict covers wallet-drainer behaviour only; malicious-code and privacy findings have their own scores.
-    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'priv');
+    const drain = findings.filter(f => f.group !== 'js' && f.group !== 'dl' && f.group !== 'priv');
     const score = drain.reduce((s, f) => s + SEV[f.sev], 0);
     const crit = drain.filter(f => f.sev === 'crit').length;
     const v = document.getElementById('verdict');
@@ -1689,6 +1718,64 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     } catch (_) { if (myRun === run) add('src', 'info', 'Could not download a script file', 'This file was not scanned.', abs); }
   }
 
+  /* ---------- Downloaded programs: hashed and read in the helper, never run ---------- */
+  const DL_LINK = /\.(exe|msi|dmg|pkg|iso|apk|scr|bat|jar|zip|rar|7z)$/i;
+  const DL_MAX_FILES = 5;
+  let dlQueue = Promise.resolve(), dlSeen = new Set(), dlNoKeyNoted = false;
+  const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  function queueDownload(url, why) {
+    if (!url || dlSeen.has(url) || dlSeen.size >= DL_MAX_FILES) return;
+    dlSeen.add(url);
+    let name = url; try { name = decodeURIComponent(url.split('?')[0].split('/').pop() || url).slice(0, 60); } catch (_) {}
+    if (!document.getElementById('scandl').checked) return add('dl', 'info', 'Offers a program download: ' + name, 'Not checked because "Check downloads" is off. It was found as: ' + why + '.', url, 'Turn on "Check downloads" and test again to hash it and read its headers without running it.');
+    if (!HELPER) return add('dl', 'info', 'Offers a program download: ' + name, 'Checking downloads needs the local helper.', url);
+    const myRun = run;
+    dlQueue = dlQueue.then(() => scanDownload(url, name, why, myRun)).catch(() => {});
+  }
+  async function scanDownload(url, name, why, myRun) {
+    status.textContent = 'Checking download ' + name + '…';
+    let r;
+    try { r = JSON.parse((await getText('/scan-file?url=' + encodeURIComponent(url), 170000, { 'X-Bench-Token': HELPER.token })).text); }
+    catch (e) { if (myRun === run) add('dl', 'info', 'Could not check ' + name, e.message, url); return; }
+    if (myRun !== run) return;
+    const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+    const facts = [r.kind, fmtSize(r.size), 'entropy ' + r.entropy, r.machine, r.signed === true ? 'signed' : r.signed === false ? 'unsigned' : '', r.dotnet ? '.NET' : ''].filter(Boolean).join(' · ');
+    add('dl', 'info', 'Checked ' + name, facts + '. Found as: ' + why + '.', url + '\nSHA-256 ' + r.sha256, 'Search the SHA-256 on VirusTotal to see what other engines say.');
+    const evid = url + '\nSHA-256 ' + r.sha256;
+    if (APT29_HASHES.has(r.sha256)) add('dl', 'crit', 'File matches a published APT29 exploit payload', name + ' has a SHA-256 listed in Sekoia\'s report.', evid, 'Do not open this file.');
+    const vt = r.virustotal;
+    if (vt && vt.known) {
+      const n = vt.malicious + vt.suspicious, lbl = vt.label ? ' (' + vt.label + ')' : '';
+      if (vt.malicious >= 5) add('dl', 'crit', 'Known malware: ' + vt.malicious + ' of ' + vt.total + ' engines flag ' + name, 'VirusTotal\'s scan of this exact file' + lbl + '.', evid, 'Do not open this file.');
+      else if (n >= 1) add('dl', 'high', 'Flagged by ' + n + ' of ' + vt.total + ' VirusTotal engines: ' + name, 'A few detections can be false alarms, but a download from an unknown site deserves caution' + lbl + '.', evid);
+      else add('dl', 'info', 'VirusTotal knows this file and flags nothing', vt.total + ' engines scanned it. A known clean file is a good sign.', evid);
+    } else if (vt && vt.known === false) add('dl', 'info', 'File not known to VirusTotal: ' + name, 'New or rare files have no record yet. That is not proof they are safe.', evid);
+    else if (vt && vt.error) add('dl', 'info', 'VirusTotal lookup failed', vt.error, '');
+    else if (!dlNoKeyNoted) { dlNoKeyNoted = true; add('dl', 'info', 'Reputation lookup is off', 'Start the helper with a VT_API_KEY environment variable to look up each file\'s hash on VirusTotal. Only the hash is sent.', ''); }
+    const k = r.kind || '';
+    const expect = { exe: /Windows executable/, scr: /Windows executable/, msi: /installer/, dmg: /disk image|Encrypted/, zip: /ZIP/, apk: /ZIP/, jar: /ZIP/ }[ext.toLowerCase()];
+    if (expect && !expect.test(k)) add('dl', 'high', name + ' is not what its name says', 'The name ends in .' + ext + ' but the content is: ' + k + '.', evid, 'Do not open it.');
+    if (/Windows executable/.test(k)) {
+      if (r.signed === false) add('dl', siteVerified ? 'med' : 'high', 'Unsigned Windows program: ' + name, 'It carries no publisher signature, so Windows cannot tell you who made it.', evid, 'Prefer the publisher\'s official download. Check Properties > Digital Signatures before running.');
+      else if (r.signed) add('dl', 'info', 'Windows program has a signature: ' + name, 'A signature is present but its validity and publisher were not checked here.', evid, 'Check Properties > Digital Signatures, or Get-AuthenticodeSignature in PowerShell, before running.');
+      const secs = r.sections || [];
+      const packed = secs.filter(x => x.packer || (x.exec && x.entropy !== null && x.entropy > 7.2));
+      if (packed.length) add('dl', 'high', 'Packed or encrypted code in ' + name, 'Packers hide the real program from scanners. Some legitimate software uses them, but malware relies on them.', packed.map(x => x.name + ' (entropy ' + x.entropy + (x.packer ? ', known packer name' : '') + ')').join('\n'));
+      const wx = secs.filter(x => x.exec && x.write);
+      if (wx.length) add('dl', 'med', 'Writable and executable section in ' + name, 'Code that can rewrite itself is a common way to unpack hidden code at run time.', wx.map(x => x.name).join(', '));
+      if (r.timestamp && r.timestamp * 1000 > Date.now() + 864e5) add('dl', 'med', 'Build date is in the future: ' + name, 'A forged build time is a small sign of tampering.', new Date(r.timestamp * 1000).toISOString());
+    }
+    if (/macOS executable/.test(k) && r.signed === false) add('dl', 'high', 'Unsigned macOS program: ' + name, 'It has no code signature, which current macOS requires even for locally built apps.', evid, 'Check with: codesign -dv --verbose=4 <file>');
+    if (/disk image/.test(k)) add('dl', 'info', 'Disk image contents were not opened: ' + name, 'Its signature and the app inside need codesign and spctl, which this check does not run.', evid, 'Verify with: codesign -dv <file>.dmg and spctl --assess --type open --context context:primary-signature <file>.dmg');
+    if (r.encrypted) add('dl', 'med', 'Password-protected file: ' + name, 'Encryption keeps scanners from reading the contents. Legitimate downloads rarely need it.', evid);
+    if (r.names && r.names.length) {
+      const risky = r.names.filter(n => /\.(exe|scr|lnk|js|jse|vbs|vbe|wsf|bat|cmd|ps1|msi|jar|com|hta|command|sh)$/i.test(n));
+      const dbl = r.names.filter(n => /\.(pdf|docx?|xlsx?|jpe?g|png|txt)\.(exe|scr|lnk|js|vbs|bat|cmd|com)$/i.test(n));
+      if (dbl.length) add('dl', 'high', 'Archive hides a program behind a document name', 'A file such as report.pdf.exe looks like a document but runs as a program.', dbl.slice(0, 8).join('\n'));
+      else if (risky.length) add('dl', 'med', 'Archive contains programs or scripts: ' + name, risky.length + ' of ' + r.names.length + ' listed files can run code.', risky.slice(0, 12).join('\n'));
+    }
+  }
+
   /* ---------- Phone check: does the page send different code to phones? ---------- */
   // Some campaigns serve their payload only to iOS or Android visitors. The pages are fetched and read, never run.
   const PHONES = [['ios16', 'iPhone (iOS 16.7)'], ['ios18', 'iPhone (iOS 18.5)'], ['android', 'Android (Chrome 140)']];
@@ -1744,6 +1831,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     showError('');
     srcCache.clear(); closeViewer();
     findings = []; keys = new Set(); scanned.clear(); scriptCount = 0; siteVerified = false; resetPriv();
+    dlQueue = Promise.resolve(); dlSeen = new Set(); dlNoKeyNoted = false;
     const myRun = run = Math.random().toString(36).slice(2);
     currentUrl = u.href;
     document.getElementById('guard').hidden = true;

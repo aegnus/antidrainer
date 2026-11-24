@@ -10,6 +10,7 @@ Sniff Test loads a live site into a sandbox, gives it a fake "honeypot" wallet t
 - **Where it tried to send data**, including whether it leaked the wallet address to another domain.
 - **Malicious JavaScript** (own score): packed or JSFuck-encoded code, runtime-downloaded code, cryptominers, clipboard hijackers that swap a copied wallet address, keyloggers and card skimmers, hidden iframes, Discord webhooks, bare-IP connections and script hosts from known supply-chain attacks such as polyfill.io.
 - **Phone-targeted attacks**: indicators from the APT29 watering-hole campaign against iOS and Android visitors (Sekoia, October 2026): its delivery domains, file and cookie names, the exploit payload hashes and the fingerprinting kit's collectors. With the helper, the page is also fetched as an iPhone and as an Android phone and compared with the desktop page, because some kits send code to phones only. Those pages are read, never run.
+- **Downloaded programs** (switch **Check downloads**, off by default, helper only): linked `.exe`, `.msi`, `.dmg`, `.pkg`, `.zip` and similar files, and downloads a script starts on its own. The helper streams each file into memory (up to 250 MB, five files), hashes it and reads its headers: file type against its name, Windows signature present or missing, packed or high-entropy code, writable and executable sections, Mac code signature, password-protected archives and programs hidden behind document names. Nothing is saved to disk, run or mounted. With a `VT_API_KEY` environment variable the SHA-256 is also looked up on VirusTotal; only the hash is sent.
 - **Privacy** (own A–F score): every cookie the site sets (header or script, first or third party, lifetime, tracking names), trackers by kind (ads, analytics, session recording, social, fingerprinting), canvas, font, audio and WebGL fingerprinting, keystroke listeners from third parties, 1-pixel tracking images and the number of other domains contacted. The test visitor also sends a Global Privacy Control opt-out (`Sec-GPC: 1` and `navigator.globalPrivacyControl`), and the report notes whether the site reads it, publishes `/.well-known/gpc.json`, or tracks anyway.
 - **JSON report**: the **Export report (JSON)** button saves the scores, findings, cookies, trackers and contacted domains as a file.
 - **Clickable addresses**: web addresses in the results are links. Clicking one shows its source over the sandbox pane, read-only, with JavaScript colour-coded. The bench downloads it through the helper and never runs it, and nothing opens in a new browser tab.
@@ -42,6 +43,8 @@ Options:
 | `--allow-private` | Allow addresses on your local network, for testing your own local dApp. |
 | `--no-browser` | Don't open the browser automatically. |
 
+Set `VT_API_KEY` before starting to enable VirusTotal hash lookups for downloads.
+
 ## How it works
 
 ```
@@ -65,6 +68,7 @@ Options:
 - The bench's own fetch route needs a random key that only the bench page knows; requests from other origins, including the sandboxed site, are refused.
 - Refuses addresses on your local network (router, NAS, cloud metadata, the helper itself) unless you pass `--allow-private`. The helper's own ports stay blocked either way.
 - Sends no cookies to the tested site and keeps none from it.
+- Inspects downloads in memory only: no file is written to disk, opened, mounted or run.
 
 ## Limits
 
@@ -73,6 +77,7 @@ Options:
 - Drainers also abuse your real wallet's genuine prompts. Always read the request in your wallet's own window before signing.
 - The malicious-code and privacy scores are heuristics from one page load. Pages behave differently after consent banners, logins and scrolling, and a low risk or high privacy score is not a guarantee. Cookies and background requests are visible only through the local helper.
 - Trackers are matched against a short built-in list plus EasyPrivacy's domain and path rules. Rules that depend on wildcards, regexes or the page being visited are skipped, so some trackers go unseen.
+- The download check reads headers and hashes. It does not verify signatures or unpack disk images, and it cannot see what a program does when run. A clean result or an unknown hash does not mean a file is safe.
 - The phone check compares the scripts a page's HTML references. It cannot see kits that decide in their own code, by touch support or screen size, so a clean result does not rule out phone-only attacks. The tool does not run exploits for phones: the sandbox runs the desktop page.
 - The Global Privacy Control check only shows that trackers loaded with no sign the signal was read. It cannot prove a site ignored it. The header is sent only through the local helper.
 - Each test downloads the MetaMask, ScamSniffer (domains and addresses) and EasyPrivacy lists (about 11 MB, cached in the browser for a day), so GitHub and easylist.to see your IP address. The domain-age lookup sends the tested site's registrable domain to rdap.org and the domain's registry. Nothing else from the tested site is sent out.

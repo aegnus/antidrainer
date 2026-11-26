@@ -555,7 +555,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   const isIp = h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
   const pageHost = () => { try { return new URL(currentUrl).hostname.toLowerCase(); } catch (_) { return ''; } };
   // Downloaded lists (see loadFeeds): ScamSniffer scam domains and EasyPrivacy tracker rules.
-  const FEED = { scam: null, easy: null, addr: null, status: {} };
+  const FEED = { scam: null, easy: null, addr: null, dot: null, dotAddr: null, status: {} };
   const classify = host => {
     const parts = String(host).toLowerCase().split('.');
     for (let i = 0; i < parts.length - 1; i++) { const t = TRACKERS.get(parts.slice(i).join('.')); if (t) return t; }
@@ -573,13 +573,27 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     } catch (_) {}
     return null;
   };
+  // Polkadot addresses (SS58): base58 text holding a 32-byte public key. The key is what the chain sees, so lists
+  // and decoded transactions are compared by key.
+  const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function ss58Key(addr) {
+    try {
+      let n = 0n; for (const ch of String(addr)) { const d = B58.indexOf(ch); if (d < 0) return ''; n = n * 58n + BigInt(d); }
+      const bytes = []; while (n > 0n) { bytes.unshift(Number(n & 255n)); n >>= 8n; }
+      for (const ch of String(addr)) { if (ch === '1') bytes.unshift(0); else break; }
+      if (bytes.length < 35 || bytes.length > 36) return '';
+      return bytes.slice(bytes.length - 34, bytes.length - 2).map(x => x.toString(16).padStart(2, '0')).join('');
+    } catch (_) { return ''; }
+  }
+  const SS58_RE = /\b[1-9A-HJ-NP-Za-km-z]{46,48}\b/g;
   const ADDR_RE = /0x[0-9a-fA-F]{40}\b/g;
   const addrHits = text => {
-    if (!FEED.addr) return [];
+    if (!FEED.addr && !FEED.dotAddr) return [];
     const hits = new Set();
-    for (const m of String(text).matchAll(ADDR_RE)) { const a = m[0].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
+    if (FEED.addr) for (const m of String(text).matchAll(ADDR_RE)) { const a = m[0].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
+    if (FEED.dotAddr && FEED.dotAddr.size) for (const m of String(text).matchAll(SS58_RE)) { const k = ss58Key(m[0]); if (k && FEED.dotAddr.has(k)) hits.add(m[0]); }
     // Addresses inside ABI-encoded call data are padded to 32 bytes.
-    for (const m of String(text).matchAll(/0{24}([0-9a-fA-F]{40})/g)) { const a = '0x' + m[1].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
+    if (FEED.addr) for (const m of String(text).matchAll(/0{24}([0-9a-fA-F]{40})/g)) { const a = '0x' + m[1].toLowerCase(); if (a !== ME && FEED.addr.has(a)) hits.add(a); }
     return [...hits];
   };
   const scamHit = host => {
@@ -927,6 +941,27 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.tagName === 'SCRIPT' && n.src) net('script', n.src); })
       .observe(document, { subtree: true, childList: true });
 
+    // Honeypot Polkadot wallet: the injectedWeb3 interface used by Polkadot{.js}, Talisman and SubWallet. Signs nothing real.
+    guard(() => {
+      if ('injectedWeb3' in window) post('realwallet', { note: 'a Polkadot wallet extension was visible' });
+      const DOT_ADDR = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
+      const accts = [{ address: DOT_ADDR, name: 'Test account (honeypot)', type: 'sr25519' }];
+      const dotSig = '0x01' + '11'.repeat(64);
+      const injected = ext => ({
+        accounts: { get: async () => accts, subscribe: cb => { setTimeout(() => { try { cb(accts); } catch (_) {} }, 0); return () => {}; } },
+        signer: {
+          signPayload: async p => { post('dot', { api: 'signPayload', ext, payload: p }); return { id: 1, signature: dotSig }; },
+          signRaw: async r => { post('dot', { api: 'signRaw', ext, raw: r }); return { id: 2, signature: dotSig }; }
+        },
+        metadata: { get: async () => [], provide: async m => { post('dot', { api: 'metadataProvide', ext, genesis: m && m.genesisHash }); return true; } }
+      });
+      const web3 = {};
+      for (const ext of ['polkadot-js', 'talisman', 'subwallet-js']) {
+        web3[ext] = { version: '0.0.0-honeypot', enable: async origin => { post('dot', { api: 'enable', ext, origin: String(origin).slice(0, 80) }); return injected(ext); } };
+      }
+      Object.defineProperty(window, 'injectedWeb3', { value: web3, configurable: true, writable: true, enumerable: true });
+    });
+
     // Victim emulation: click the buttons a victim would click.
     if (cfg.autoClick) {
       const CLICK = /(connect|claim|confirm|approve|continue|verify|mint|eligib|swap|sign in|get started)/i;
@@ -1024,7 +1059,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     jsScan(src, file);
     const bad = addrHits(src);
-    if (bad.length) add('src', 'crit', 'Code contains a known scam address', 'A wallet address hard-coded in ' + file + ' is listed in ScamSniffer\'s scam-address database. Drainers embed their receiving wallets this way.', bad.slice(0, 5).join('\n'), 'Do not connect a wallet to this site.');
+    if (bad.length) add('src', 'crit', 'Code contains a known scam address', 'A wallet address hard-coded in ' + file + ' is listed in a scam-address database (ScamSniffer or Polkadot{.js}). Drainers embed their receiving wallets this way.', bad.slice(0, 5).join('\n'), 'Do not connect a wallet to this site.');
   }
   const excerpt = (s, i, len) => s.slice(Math.max(0, i - 50), i + len + 50).replace(/\s+/g, ' ').trim();
 
@@ -1140,7 +1175,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   function analyzeRpc({ method, params }) {
     const p = Array.isArray(params) ? params : [];
     let blob = ''; try { blob = JSON.stringify(p); } catch (_) {}
-    for (const a of addrHits(blob)) add('rpc', 'crit', 'Request involves a known scam address', a + ' is listed in ScamSniffer\'s database of crypto scam addresses.', a + '\n' + method, AFTERCARE_ADVICE);
+    for (const a of addrHits(blob)) add('rpc', 'crit', 'Request involves a known scam address', a + ' is listed in a database of crypto scam addresses (ScamSniffer or Polkadot{.js}).', a + '\n' + method, AFTERCARE_ADVICE);
     // EIP-7702: the account is turned into a smart account running a contract chosen by the site.
     if (/authoriz|delegat|7702|upgradeaccount/i.test(String(method)) && method !== 'wallet_grantPermissions' || /"authorizationList"|"type":"0x4"/i.test(blob))
       add('rpc', siteVerified ? 'high' : 'crit', 'Asks to delegate your account to a contract (EIP-7702)', 'Delegation lets a contract run code as your wallet. Drainers use it to approve and sweep many tokens in one step. Few sites need it.', pretty(p), AFTERCARE_ADVICE);
@@ -1195,6 +1230,94 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     }
     add('net', 'info', 'Contacts ' + (host || 'its own server'), kind === 'script' ? 'Loads script files from here.' : 'Sends requests here (' + kind + ').', url);
   }
+  /* ---------- Polkadot wallets ---------- */
+  // Genesis hashes name the chain. Pallet numbers (checked against the runtime source) let the bench read the common
+  // calls: balance transfers, batches and proxies. Other chains and calls are reported as unreadable, never guessed.
+  const DOT_CHAINS = {
+    '0x91b171bb158e2d3848fa23a9f1c25182fb8e20313b2c1eb49219da7a70ce90c3': { name: 'Polkadot', unit: 'DOT', dec: 10, pallets: { 5: 'Balances', 26: 'Utility', 29: 'Proxy' } },
+    '0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f': { name: 'Polkadot Asset Hub', unit: 'DOT', dec: 10, pallets: { 10: 'Balances', 40: 'Utility', 42: 'Proxy' } },
+    '0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe': { name: 'Kusama', pallets: {} },
+    '0x48239ef607d7928874027a43a67689209727dfb3d3dc5e5b03a39bdc2eda771a': { name: 'Kusama Asset Hub', pallets: {} }
+  };
+  const DOT_ME_KEY = 'd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d';
+  function scaleCalls(hex, pallets) {
+    const b = (String(hex).replace(/^0x/i, '').match(/../g) || []).map(h => parseInt(h, 16));
+    let i = 0; const seen = []; let complete = true;
+    const need = n => { if (i + n > b.length) throw new Error('short'); };
+    const hx = a => a.map(x => x.toString(16).padStart(2, '0')).join('');
+    const compact = () => {
+      need(1); const x = b[i], m = x & 3;
+      if (m === 0) { i += 1; return BigInt(x >> 2); }
+      if (m === 1) { need(2); const v = (b[i] + b[i + 1] * 256) >> 2; i += 2; return BigInt(v); }
+      if (m === 2) { need(4); const v = (b[i] + b[i + 1] * 256 + b[i + 2] * 65536 + b[i + 3] * 16777216) >>> 2; i += 4; return BigInt(v); }
+      const n = (x >> 2) + 4; need(1 + n); let v = 0n; for (let k = 0; k < n; k++) v |= BigInt(b[i + 1 + k]) << BigInt(8 * k); i += 1 + n; return v;
+    };
+    const addr = () => { need(1); const t = b[i++]; if (t !== 0 && t !== 3) throw new Error('address type'); need(32); const k = hx(b.slice(i, i + 32)); i += 32; return k; };
+    const one = () => {
+      need(2); const p = b[i++], c = b[i++], pal = pallets[p];
+      const rec = { pallet: pal || 'pallet ' + p, index: c, name: 'call ' + c }; seen.push(rec);
+      if (pal === 'Balances') {
+        if (c === 0 || c === 3) { rec.name = c === 0 ? 'transfer_allow_death' : 'transfer_keep_alive'; rec.dest = addr(); rec.amount = compact(); }
+        else if (c === 2) { rec.name = 'force_transfer'; rec.source = addr(); rec.dest = addr(); rec.amount = compact(); }
+        else if (c === 4) { rec.name = 'transfer_all'; rec.dest = addr(); need(1); i += 1; }
+        else throw new Error('unknown');
+      } else if (pal === 'Proxy') {
+        if (c === 1) { rec.name = 'add_proxy'; rec.delegate = addr(); need(5); rec.proxyType = b[i]; i += 5; }
+        else if (c === 0) { rec.name = 'proxy'; rec.real = addr(); need(1); if (b[i++] === 1) { need(1); i += 1; } one(); }
+        else if (c === 2) { rec.name = 'remove_proxy'; addr(); need(5); i += 5; }
+        else if (c === 3) rec.name = 'remove_proxies';
+        else if (c === 4) { rec.name = 'create_pure'; need(7); i += 7; }
+        else throw new Error('unknown');
+      } else if (pal === 'Utility') {
+        if (c === 0 || c === 2 || c === 4) { rec.name = { 0: 'batch', 2: 'batch_all', 4: 'force_batch' }[c]; const n = Number(compact()); rec.count = n; if (n > 50) throw new Error('long'); for (let k = 0; k < n; k++) one(); }
+        else if (c === 1) { rec.name = 'as_derivative'; need(2); i += 2; one(); }
+        else throw new Error('unknown');
+      } else throw new Error('unknown');
+    };
+    try { one(); } catch (_) { complete = false; }
+    if (complete && i < b.length) complete = false;
+    return { calls: seen, complete };
+  }
+  const dotAmount = (n, chain) => chain && chain.unit ? (Number(n) / 10 ** chain.dec).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ' + chain.unit : n + ' (smallest unit)';
+  const DOT_ADVICE = 'Do not sign it. If you already did, move your funds to a new account and remove any proxies at wallet.polkadot.cloud or in your wallet.';
+  function analyzeDot(d) {
+    if (d.api === 'enable') return add('rpc', 'info', 'Asked to connect a Polkadot wallet', 'The page requested accounts from the "' + d.ext + '" wallet' + (d.origin ? ' as "' + d.origin + '"' : '') + '.', d.ext);
+    if (d.api === 'metadataProvide') return add('rpc', 'med', 'Supplies its own chain metadata to the wallet', 'Metadata tells the wallet how to describe a transaction. A site that provides its own can make a harmful transaction look harmless.', d.genesis || '');
+    if (d.api === 'signRaw') {
+      const raw = d.raw || {}, data = String(raw.data || '');
+      let text = data;
+      if (/^0x[0-9a-f]*$/i.test(data)) { try { text = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array((data.slice(2).match(/../g) || []).map(h => parseInt(h, 16)))); } catch (_) { text = ''; } }
+      const readable = text && !/[\u0000-\u0008\u000e-\u001f]/.test(text);
+      if (raw.type === 'payload') return add('rpc', 'high', 'Asks to sign a raw transaction payload', 'Signing raw payload bytes can authorize a transaction without the wallet being able to describe it.', data.slice(0, 300), DOT_ADVICE);
+      if (readable) return add('rpc', 'info', 'Polkadot message signature', 'Plain text, usually a sign-in.', text.replace(/^<Bytes>|<\/Bytes>$/g, '').slice(0, 400));
+      return add('rpc', 'med', 'Signs unreadable Polkadot data', 'You cannot tell what this signature authorizes.', data.slice(0, 300));
+    }
+    if (d.api !== 'signPayload') return;
+    const p = d.payload || {}, method = String(p.method || ''), chain = DOT_CHAINS[String(p.genesisHash || '').toLowerCase()];
+    const where = chain ? chain.name : 'an unknown chain';
+    if (/^0x[0-9a-f]+$/i.test(method)) {
+      for (const [k, a] of (FEED.dotAddr || new Map())) if (method.toLowerCase().includes(k)) add('rpc', 'crit', 'Request involves a known scam address', a + ' is listed in the Polkadot{.js} phishing address list.', a + '\nsignPayload on ' + where, DOT_ADVICE);
+    }
+    if (String(p.era || '') === '0x00') add('rpc', 'med', 'Transaction never expires', 'An immortal transaction can be kept and submitted later, long after you signed it. Wallets normally use a short expiry.', 'era 0x00 on ' + where);
+    if (!chain) add('rpc', 'info', 'Transaction on a chain this tool does not know', 'Genesis hash ' + String(p.genesisHash || 'missing') + '. The transaction cannot be read.', '');
+    const r = chain && chain.pallets && Object.keys(chain.pallets).length ? scaleCalls(method, chain.pallets) : { calls: [], complete: false };
+    const raw = 'call data ' + method.slice(0, 120) + (method.length > 120 ? '…' : '');
+    const crit = siteVerified ? 'high' : 'crit';
+    let readable = r.complete;
+    for (const c of r.calls) {
+      const to = c.dest === DOT_ME_KEY ? 'your own account' : c.dest ? '0x' + c.dest : '';
+      if (c.pallet === 'Balances' && c.name === 'transfer_all') add('rpc', crit, 'Asks to send your entire balance away', 'transfer_all on ' + where + ' empties the account to ' + to + '. Few sites need this, and drainers always do.', 'Balances.transfer_all → ' + to, DOT_ADVICE);
+      else if (c.pallet === 'Balances' && c.dest !== undefined) add('rpc', c.dest === DOT_ME_KEY ? 'info' : 'high', 'Asks to send ' + dotAmount(c.amount, chain), c.name + ' on ' + where + ' moves funds to ' + to + '.', 'Balances.' + c.name + ' → ' + to, DOT_ADVICE);
+      else if (c.pallet === 'Proxy' && c.name === 'add_proxy') add('rpc', crit, 'Asks to give another account control of yours (proxy)', 'A proxy ' + (c.proxyType === 0 ? 'of type Any can do everything your account can, including moving all funds.' : 'can act for your account within its type.') + ' Drainers add themselves as a proxy and take the funds later.', 'Proxy.add_proxy → 0x' + c.delegate + ' (type ' + c.proxyType + ')', DOT_ADVICE);
+      else if (c.pallet === 'Proxy' && c.name === 'proxy') add('rpc', 'med', 'Acts through a proxy', 'The call runs as another account that gave you proxy rights, or as yours if you are the proxy.', 'Proxy.proxy', '');
+      else if (c.pallet === 'Utility' && /batch/.test(c.name)) add('rpc', 'info', 'Bundles ' + c.count + ' action' + (c.count === 1 ? '' : 's') + ' in one signature', 'Batches hide several actions behind one approval. Each readable action is judged separately.', 'Utility.' + c.name);
+      else if (c.pallet === 'Proxy') add('rpc', 'info', 'Proxy action: ' + c.name, 'Changes who can act for your account.', 'Proxy.' + c.name);
+      if (c.name.startsWith('call ')) readable = false;
+    }
+    if (!readable) add('rpc', 'med', 'Asks to sign a transaction this tool cannot fully read', 'The call data on ' + where + ' is not one of the balance, batch and proxy calls the bench decodes. Check what your wallet shows before you sign anything.', raw + (r.calls.length ? '\nread so far: ' + r.calls.map(c => c.pallet + '.' + c.name).join(', ') : ''));
+    else if (!r.calls.some(c => c.pallet === 'Balances' || (c.pallet === 'Proxy' && c.name === 'add_proxy'))) add('rpc', 'info', 'Polkadot transaction', 'Readable calls: ' + r.calls.map(c => c.pallet + '.' + c.name).join(', ') + '.', raw);
+  }
+
   function analyzeUi(d) {
     if (d.kind === 'prompt') add('ui', 'crit', 'Wallet confirmation drawn by the page', 'Real wallet prompts open in their own window, never inside the page.' + (d.amount ? ' It claims "' + d.amount + '" to make signing look harmless.' : ''), d.snippet);
     else if (d.kind === 'bitb') add('ui', 'crit', 'Fake browser window inside the page', 'It shows an extension address to impersonate a wallet window.', d.snippet);
@@ -1635,7 +1758,9 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
   const FEEDS = {
     scam: 'https://raw.githubusercontent.com/scamsniffer/scam-database/main/blacklist/domains.json',
     easy: 'https://easylist.to/easylist/easyprivacy.txt',
-    addr: 'https://raw.githubusercontent.com/scamsniffer/scam-database/main/blacklist/address.json'
+    addr: 'https://raw.githubusercontent.com/scamsniffer/scam-database/main/blacklist/address.json',
+    dot: 'https://raw.githubusercontent.com/polkadot-js/phishing/master/all.json',
+    dotAddr: 'https://raw.githubusercontent.com/polkadot-js/phishing/master/address.json'
   };
   const FEED_TTL = 24 * 3600 * 1000;
   const idb = (mode, fn) => new Promise((resolve, reject) => {
@@ -1693,10 +1818,17 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
           .catch(e => { FEED.status.scam = 'could not load: ' + e.message; }),
         feedText('addr').then(r => { FEED.addr = new Set(JSON.parse(r.text).map(a => String(a).toLowerCase())); FEED.status.addr = r.note; })
           .catch(e => { FEED.status.addr = 'could not load: ' + e.message; }),
+        feedText('dot').then(r => { FEED.dot = new Set((JSON.parse(r.text).deny || []).map(d => String(d).toLowerCase())); FEED.status.dot = r.note; })
+          .catch(e => { FEED.status.dot = 'could not load: ' + e.message; }),
+        feedText('dotAddr').then(r => {
+          FEED.dotAddr = new Map();
+          for (const list of Object.values(JSON.parse(r.text))) for (const a of list) { const k = ss58Key(a); if (k) FEED.dotAddr.set(k, a); }
+          FEED.status.dotAddr = r.note;
+        }).catch(e => { FEED.status.dotAddr = 'could not load: ' + e.message; }),
         feedText('easy').then(r => { FEED.easy = parseEasyPrivacy(r.text); FEED.status.easy = r.note; })
           .catch(e => { FEED.status.easy = 'could not load: ' + e.message; })
       ]);
-      if (!FEED.scam || !FEED.easy || !FEED.addr) feedsPromise = null;  // retry on the next test
+      if (!FEED.scam || !FEED.easy || !FEED.addr || !FEED.dot || !FEED.dotAddr) feedsPromise = null;  // retry on the next test
     })();
     return feedsPromise;
   }
@@ -1746,6 +1878,12 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     if (bad) add('site', 'crit', 'On the ScamSniffer scam list', bad + ' is listed in ScamSniffer\'s database of crypto scam domains.', host);
     else if (FEED.scam) add('site', 'info', 'Not on the ScamSniffer scam list', FEED.scam.size.toLocaleString() + ' scam domains checked (' + FEED.status.scam + '). New sites appear daily, so this proves little.', host);
     else add('site', 'info', 'Could not check the ScamSniffer scam list', FEED.status.scam || '', '');
+    if (FEED.dot && FEED.dot.size) {
+      const parts = host.split('.'); let dh = '';
+      for (let i = 0; i < parts.length - 1 && !dh; i++) { const d = parts.slice(i).join('.'); if (FEED.dot.has(d)) dh = d; }
+      if (dh) add('site', 'crit', 'On the Polkadot{.js} phishing list', dh + ' is listed in the Polkadot{.js} extension\'s phishing blocklist.', host);
+      else add('site', 'info', 'Not on the Polkadot{.js} phishing list', FEED.dot.size.toLocaleString() + ' listed domains checked (' + FEED.status.dot + '). New sites appear daily, so this proves little.', host);
+    }
     domainAge(host).catch(() => {});
   }
   // Registration date from the public RDAP service. A domain days old that asks for a wallet is a classic drainer sign.
@@ -2026,6 +2164,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     else if (msg.type === 'ui') analyzeUi(msg.data);
     else if (msg.type === 'probe') analyzeProbe(msg.data);
     else if (msg.type === 'loaded') status.textContent = status.textContent.replace(/ · running in sandbox$/, '') + ' · page running';
+    else if (msg.type === 'dot') analyzeDot(msg.data);
     else if (msg.type === 'dlfile') scanBuiltFile(msg.data);
     else if (msg.type === 'dllink') queueDownload(msg.data.url, 'a download link that appeared after clicking a button');
     else if (msg.type === 'dlhunt') status.textContent = msg.data.done ? 'Done · tried ' + msg.data.clicks + ' download button' + (msg.data.clicks === 1 ? '' : 's') : 'Clicking download button "' + msg.data.label + '"…';

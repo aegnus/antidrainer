@@ -28,10 +28,12 @@ Needs only Python 3.8+, no extra packages.
 """
 import argparse
 import collections
+import concurrent.futures
 import hashlib
 import io
 import math
 import os
+import re
 import struct
 import time
 import http.server
@@ -161,6 +163,9 @@ body.busy #run .go { display: none; }
 .spin { animation: rot .8s linear infinite; }
 .field-error { margin: -6px 4px 0; color: var(--crit); font-size: 13px; }
 .status { display: flex; align-items: center; gap: 8px; margin: -4px 4px 0; font-size: 13px; color: var(--label-2); min-height: 18px; }
+.examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 4px; font-size: 12px; color: var(--label-2); }
+.examples button { font: 12px var(--mono); padding: 3px 9px; border: 1px solid var(--sep); border-radius: 999px; background: var(--fill); color: var(--label); cursor: pointer; }
+.examples button:hover { border-color: var(--accent); color: var(--accent); }
 .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--label-3); flex: none; }
 body.busy .status::before { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
@@ -375,6 +380,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     </form>
     <p class="field-error" id="url-error" hidden></p>
     <p class="status" id="status">Enter an address to start</p>
+    <p class="examples" id="examples" hidden></p>
     <div>
       <div class="inset">
         <label class="cell" for="autoclick">
@@ -1367,6 +1373,35 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
     else if (!r.calls.some(c => c.pallet === 'Balances' || (c.pallet === 'Proxy' && c.name === 'add_proxy'))) add('rpc', 'info', 'Polkadot transaction', 'Readable calls: ' + r.calls.map(c => c.pallet + '.' + c.name).join(', ') + '.', raw);
   }
 
+  // Offer a few phishing sites that are live right now. Candidates come from the downloaded Polkadot{.js} list, and the
+  // helper checks which still resolve, so the examples stay current without anything being hard-coded.
+  async function showExamples() {
+    if (!HELPER) return;
+    try {
+      await loadFeeds();
+      const list = await loadPhishList();
+      if (!FEED.dot) return;
+      // Big legitimate platforms appear on the list for single pages. Only whole-site phishing domains make good examples.
+      const BIG = new Set(['twitter.com', 'x.com', 'youtube.com', 'youtu.be', 'telegra.ph', 't.me', 'telegram.org', 'google.com', 'github.com', 'facebook.com', 'instagram.com', 'medium.com', 'discord.com', 'discord.gg', 'linkedin.com', 'reddit.com', 'tiktok.com', 'wikipedia.org', 'docs.google.com', 'forms.gle', 'bit.ly', 'linktr.ee', 'notion.site']);
+      const known = h => BIG.has(h) || h.split('.').some((_, i, p) => list.white.has(p.slice(i).join('.')));
+      const all = [...FEED.dot], sample = [];
+      for (let i = 0; i < 300 && all.length; i++) sample.push(all[Math.floor(Math.random() * all.length)]);
+      const pool = [...new Set([...(FEED.dotSites || []), ...sample])].filter(h => !known(h));
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      const res = JSON.parse((await getText('/live?hosts=' + encodeURIComponent(pool.slice(0, 100).join(',')), 20000, { 'X-Bench-Token': HELPER.token })).text);
+      if (!res.length) return;
+      const box = document.getElementById('examples');
+      box.textContent = 'Phishing sites on the Polkadot{.js} list that are live now. Test them here, never in your normal browser:';
+      for (const h of res.slice(0, 5)) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = h;
+        b.addEventListener('click', () => { const u = document.getElementById('url'); u.value = h; u.focus(); });
+        box.appendChild(b);
+      }
+      box.hidden = false;
+    } catch (_) {}
+  }
+  window.addEventListener('load', showExamples);
+
   function analyzeUi(d) {
     if (d.kind === 'prompt') add('ui', 'crit', 'Wallet confirmation drawn by the page', 'Real wallet prompts open in their own window, never inside the page.' + (d.amount ? ' It claims "' + d.amount + '" to make signing look harmless.' : ''), d.snippet);
     else if (d.kind === 'bitb') add('ui', 'crit', 'Fake browser window inside the page', 'It shows an extension address to impersonate a wallet window.', d.snippet);
@@ -1872,7 +1907,7 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .35); }
         feedText('dotAddr').then(r => {
           FEED.dotAddr = new Map();
           for (const list of Object.values(JSON.parse(r.text))) for (const a of list) { const k = ss58Key(a); if (k) FEED.dotAddr.set(k, a); }
-          FEED.status.dotAddr = r.note;
+          FEED.dotSites = Object.keys(JSON.parse(r.text)); FEED.status.dotAddr = r.note;
         }).catch(e => { FEED.status.dotAddr = 'could not load: ' + e.message; }),
         feedText('easy').then(r => { FEED.easy = parseEasyPrivacy(r.text); FEED.status.easy = r.note; })
           .catch(e => { FEED.status.easy = 'could not load: ' + e.message; })
@@ -2732,6 +2767,24 @@ def vt_lookup(sha256, key):
             "total": sum(stats.values()), "label": pop}
 
 
+def live_hosts(names):
+    """Names that resolve to a public address, found with a short parallel DNS check."""
+    def public(h):
+        try:
+            for info in socket.getaddrinfo(h, 443, type=socket.SOCK_STREAM):
+                ip = ipaddress.ip_address(info[4][0].split("%")[0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                    return False
+            return True
+        except Exception:
+            return False
+    pool = concurrent.futures.ThreadPoolExecutor(40)
+    futures = {pool.submit(public, h): h for h in names}
+    done, _ = concurrent.futures.wait(futures, timeout=8)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [futures[f] for f in done if f.result()]
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -2808,6 +2861,13 @@ class BenchHandler(Base):
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
+        if parsed.path == "/live":
+            # Which of these domains still resolve to a public address? Used to offer live examples from the phishing lists.
+            if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
+                return self.send_body(403, "Refused.")
+            names = [h for h in urllib.parse.parse_qs(parsed.query).get("hosts", [""])[0].lower().split(",")
+                     if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,251}\.[a-z]{2,}", h)][:120]
+            return self.send_body(200, json.dumps(live_hosts(names)), "application/json", {"Cache-Control": "no-store"})
         if parsed.path == "/scan-file":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")

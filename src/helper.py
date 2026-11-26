@@ -27,10 +27,12 @@ Needs only Python 3.8+, no extra packages.
 """
 import argparse
 import collections
+import concurrent.futures
 import hashlib
 import io
 import math
 import os
+import re
 import struct
 import time
 import http.server
@@ -465,6 +467,24 @@ def vt_lookup(sha256, key):
             "total": sum(stats.values()), "label": pop}
 
 
+def live_hosts(names):
+    """Names that resolve to a public address, found with a short parallel DNS check."""
+    def public(h):
+        try:
+            for info in socket.getaddrinfo(h, 443, type=socket.SOCK_STREAM):
+                ip = ipaddress.ip_address(info[4][0].split("%")[0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                    return False
+            return True
+        except Exception:
+            return False
+    pool = concurrent.futures.ThreadPoolExecutor(40)
+    futures = {pool.submit(public, h): h for h in names}
+    done, _ = concurrent.futures.wait(futures, timeout=8)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [futures[f] for f in done if f.result()]
+
+
 def friendly_error(e):
     if isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
         return ("Secure connection failed (" + str(e) + "). On macOS with Python from python.org, run "
@@ -541,6 +561,13 @@ class BenchHandler(Base):
             charset = headers.get_content_charset() or "utf-8"
             return self.send_body(200, data.decode(charset, errors="replace"),
                                   extra={"X-Final-URL": final, "Cache-Control": "no-store"})
+        if parsed.path == "/live":
+            # Which of these domains still resolve to a public address? Used to offer live examples from the phishing lists.
+            if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
+                return self.send_body(403, "Refused.")
+            names = [h for h in urllib.parse.parse_qs(parsed.query).get("hosts", [""])[0].lower().split(",")
+                     if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,251}\.[a-z]{2,}", h)][:120]
+            return self.send_body(200, json.dumps(live_hosts(names)), "application/json", {"Cache-Control": "no-store"})
         if parsed.path == "/scan-file":
             if not self.same_origin_ok() or self.headers.get("X-Bench-Token") != TOKEN:
                 return self.send_body(403, "Refused.")
